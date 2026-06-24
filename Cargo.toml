@@ -1,0 +1,21 @@
+[package]
+name = "rmimeparser"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Push-based MIME and RFC 5322 message parser (gumdrop-style)"
+readme = "README.md"
+license = "LGPL-2.1-or-later"
+repository = "https://github.com/cpkb-bluezoo/rmimeparser"
+keywords = ["mime", "email", "rfc5322", "parser", "streaming"]
+categories = ["email", "parser-implementations"]
+
+[lib]
+name = "rmimeparser"
+path = "src/lib.rs"
+
+[dev-dependencies]
+
+[[test]]
+name = "mime_utils_test"
+path = "tests/tests/mime_utils_test.rs"
