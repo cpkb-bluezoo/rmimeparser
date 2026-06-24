@@ -9,9 +9,7 @@ Push-based MIME and RFC 5322 message parser for Rust.
 - MIME core with RFC 5322 as an extension (`MessageParser` composes `MimeParser`)
 - Zero dependencies beyond the Rust standard library
 
-This is **not** a port of Java SAM (`MessageParser` in `com.mimecast:sam`). It follows gumdrop’s MIME-first design; SAM’s message-centred API and legacy RFC handling are out of scope.
-
-A unified MIME writer/handler will be added later. Gumdrop’s generation pieces (`RFC2047Encoder`, `MessageDateTimeFormatter`, `to_header_value()` on value types) are included for header encoding.
+A unified MIME writer/handler may be added later. Gumdrop’s generation pieces (`RFC2047Encoder`, `MessageDateTimeFormatter`, `to_header_value()` on value types) are included for header encoding.
 
 ## MIME parser
 
