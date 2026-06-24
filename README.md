@@ -104,7 +104,7 @@ cargo test
 cargo doc --open
 ```
 
-The test suite ports gumdrop's MIME JUnit tests (337 integration tests across parser, decoders, content types, RFC 2047/2231, and RFC 5322).
+The test suite ports gumdrop's MIME JUnit tests (368 integration tests across parser, decoders, content types, RFC 2047/2231, and RFC 5322).
 
 ## Publishing
 

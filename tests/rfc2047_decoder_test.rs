@@ -176,6 +176,15 @@ fn test_decode_unstructured_header_value_with_folding() {
 }
 
 #[test]
+fn test_decode_display_name_quoted_comma() {
+    let mut cursor = ByteCursor::new(b"\"Smith, Alice\" <alice@example.com>");
+    let stop = [b'<', b':', b',', b';'];
+    let out = Rfc2047Decoder::decode_display_name(&mut cursor, HeaderCharset::Iso88591, &stop);
+    assert_eq!(out, "Smith, Alice");
+    assert_eq!(cursor.get(cursor.position()), b'<');
+}
+
+#[test]
 fn test_decode_display_name_stops_at_angle() {
     let mut cursor = ByteCursor::new(b"John Doe <j@x.org>");
     let stop = [b'<'];

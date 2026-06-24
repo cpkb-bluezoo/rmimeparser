@@ -80,6 +80,19 @@ fn test_parse_group_address_empty() {
 }
 
 #[test]
+fn test_parse_email_address_list_byte_buffer_quoted_display_name() {
+    let value = b"\"Smith, Alice\" <alice@example.com>";
+    let mut cursor = ByteCursor::new(value);
+    let addrs =
+        EmailAddressParser::parse_email_address_list_bytes(&mut cursor, HeaderCharset::Iso88591)
+            .unwrap();
+    assert_eq!(
+        addrs[0].as_mailbox().unwrap().display_name(),
+        Some("Smith, Alice")
+    );
+}
+
+#[test]
 fn test_parse_email_address_list_byte_buffer_bare_addr_spec() {
     let value = b" user0@example.com,\tuser1@example.com,\tuser2@example.com";
     let mut cursor = ByteCursor::new(value);

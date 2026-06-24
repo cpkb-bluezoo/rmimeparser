@@ -91,6 +91,10 @@ impl EmailAddressParser {
             let mut local_cursor =
                 ByteCursor::from_slice(value.bytes(), local_range.0, local_range.1);
             let local_part = decode_slice(&mut local_cursor, charset);
+            value.set_position(local_range.1);
+            if value.position() < limit && value.get(value.position()) == b'"' {
+                value.advance(1);
+            }
             if value.position() >= limit || value.get(value.position()) != b'@' {
                 break;
             }
@@ -99,6 +103,7 @@ impl EmailAddressParser {
             let mut domain_cursor =
                 ByteCursor::from_slice(value.bytes(), domain_range.0, domain_range.1);
             let domain = decode_slice(&mut domain_cursor, charset);
+            value.set_position(domain_range.1);
             if value.position() >= limit || value.get(value.position()) != b'>' {
                 break;
             }
