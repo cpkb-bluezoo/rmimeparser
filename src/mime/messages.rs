@@ -20,8 +20,6 @@ impl MIMEMessages {
     pub const UNCLOSED_BOUNDARY: &'static str = "Unclosed multipart boundary: {0}";
     pub const UNEXPECTED_PARSER_STATE: &'static str =
         "Unexpected parser state {0} in body processing";
-    pub const UNSUPPORTED_TRANSFER_ENCODING: &'static str =
-        "Unsupported transfer encoding for decoding: {0}";
 }
 
 pub(crate) fn format_header_value_too_long(max_bytes: usize) -> String {
@@ -34,8 +32,4 @@ pub(crate) fn format_unclosed_boundary(boundary: &str) -> String {
 
 pub(crate) fn format_unexpected_parser_state(state: &str) -> String {
     MIMEMessages::UNEXPECTED_PARSER_STATE.replace("{0}", state)
-}
-
-pub(crate) fn format_unsupported_transfer_encoding(encoding: &str) -> String {
-    MIMEMessages::UNSUPPORTED_TRANSFER_ENCODING.replace("{0}", encoding)
 }

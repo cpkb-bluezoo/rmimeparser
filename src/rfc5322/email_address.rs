@@ -43,16 +43,6 @@ impl EmailAddress {
         }
     }
 
-    pub(crate) fn group_placeholder(display_name: Option<String>, comments: Option<Vec<String>>) -> Self {
-        Self {
-            display_name,
-            local_part: String::new(),
-            domain: String::new(),
-            comments,
-            simple_address: false,
-        }
-    }
-
     pub fn display_name(&self) -> Option<&str> {
         self.display_name.as_deref()
     }

@@ -24,14 +24,6 @@ impl<'a, H: MessageHandler + ?Sized> MessageBridge<'a, H> {
             strip_header_whitespace: true,
         }
     }
-
-    pub fn state_mut(&mut self) -> &mut MessageHeaderState {
-        &mut self.state
-    }
-
-    pub fn state(&self) -> &MessageHeaderState {
-        &self.state
-    }
 }
 
 impl<H: MessageHandler + ?Sized> MimeHandler for MessageBridge<'_, H> {
