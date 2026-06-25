@@ -4,6 +4,7 @@
 
 pub mod buffer;
 pub mod charset;
+pub mod dkim;
 pub mod mime;
 pub mod rfc2047;
 pub mod rfc2231;
@@ -11,6 +12,7 @@ pub mod rfc5322;
 
 pub use buffer::ByteCursor;
 pub use charset::HeaderCharset;
+pub use dkim::{DkimMessageParser, RawHeader};
 pub use mime::{
     Base64Decoder, ContentDisposition, ContentDispositionParser, ContentId, ContentIdParser,
     ContentType, ContentTypeParser, DefaultHandler, Handler, HeaderLineTooLongError,

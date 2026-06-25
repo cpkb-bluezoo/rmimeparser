@@ -60,6 +60,8 @@ pub struct MimeParser<'a, H: MimeHandler + ?Sized> {
     boundary_set: bool,
     header_name: Option<String>,
     header_value_sink: Vec<u8>,
+    header_raw_name: Option<String>,
+    header_raw_sink: Vec<u8>,
     strip_header_whitespace: bool,
     allow_cr_line_end: bool,
     max_buffer_size: usize,
@@ -83,6 +85,8 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
             boundary_set: false,
             header_name: None,
             header_value_sink: Vec::with_capacity(INITIAL_HEADER_VALUE_CAPACITY),
+            header_raw_name: None,
+            header_raw_sink: Vec::with_capacity(INITIAL_HEADER_VALUE_CAPACITY),
             strip_header_whitespace: true,
             allow_cr_line_end: false,
             max_buffer_size: 4096,
@@ -217,6 +221,8 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         self.boundary_set = false;
         self.header_name = None;
         self.header_value_sink.clear();
+        self.header_raw_name = None;
+        self.header_raw_sink.clear();
         self.decode_buffer.clear();
         self.content_flushed = false;
         self.clear_pending_body_content();
@@ -252,6 +258,7 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
     fn header_line(&mut self, line: &[u8]) -> ParseResult<()> {
         let (start, end) = strip_line_ending(line, self.allow_cr_line_end);
         if start >= end {
+            self.flush_raw_header()?;
             return self.end_headers();
         }
 
@@ -272,6 +279,8 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
                     &self.locator,
                 ));
             }
+            self.ensure_header_raw_sink_capacity(line.len())?;
+            self.header_raw_sink.extend_from_slice(line);
             if length > 0 {
                 self.ensure_header_value_sink_capacity(length)?;
                 self.header_value_sink
@@ -280,10 +289,15 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
             return Ok(());
         }
 
+        self.flush_raw_header()?;
         if let Some(name) = self.header_name.take() {
             let value = std::mem::take(&mut self.header_value_sink);
             self.dispatch_header(&name, &value)?;
         }
+
+        self.header_raw_name = extract_raw_header_name(line, start, end);
+        self.ensure_header_raw_sink_capacity(line.len())?;
+        self.header_raw_sink.extend_from_slice(line);
 
         let colon_pos = index_of(&line[start..end], b':').map(|i| start + i);
         let Some(colon_pos) = colon_pos else {
@@ -429,6 +443,13 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
     }
 
     fn body_line(&mut self, line: &[u8]) -> ParseResult<()> {
+        if matches!(
+            self.state,
+            State::Body | State::FirstBoundary | State::BoundaryOrContent | State::BoundaryOnly
+        ) {
+            self.handler.raw_body_content(line)?;
+        }
+
         self.content_flushed = false;
         match self.state {
             State::FirstBoundary | State::BoundaryOnly => {
@@ -652,6 +673,34 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         Ok(())
     }
 
+    fn ensure_header_raw_sink_capacity(&mut self, required: usize) -> ParseResult<()> {
+        let current = self.header_raw_sink.len();
+        if current + required > self.max_header_value_size {
+            return Err(HeaderValueTooLongError::new(
+                format_header_value_too_long(self.max_header_value_size),
+                &self.locator,
+            )
+            .into());
+        }
+        if self.header_raw_sink.len() + required > self.header_raw_sink.capacity() {
+            let new_cap = (current + required)
+                .max(self.header_raw_sink.capacity() * 2)
+                .max(INITIAL_HEADER_VALUE_CAPACITY);
+            self.header_raw_sink.reserve(new_cap - self.header_raw_sink.capacity());
+        }
+        Ok(())
+    }
+
+    fn flush_raw_header(&mut self) -> ParseResult<()> {
+        if let Some(name) = self.header_raw_name.take() {
+            if !self.header_raw_sink.is_empty() {
+                self.handler.raw_header(&name, &self.header_raw_sink)?;
+            }
+            self.header_raw_sink.clear();
+        }
+        Ok(())
+    }
+
     fn detect_boundary(&self, line: &[u8]) -> Option<BoundaryMatch> {
         if self.boundaries.is_empty() {
             return None;
@@ -757,6 +806,29 @@ pub fn check_boundary(line: &[u8], boundary: &str) -> Option<BoundaryMatch> {
 
 fn is_header_whitespace(b: u8) -> bool {
     b == b' ' || b == b'\t'
+}
+
+fn extract_raw_header_name(line: &[u8], start: usize, end: usize) -> Option<String> {
+    let slice = &line[start..end];
+    let colon = slice.iter().position(|&b| b == b':')?;
+    let name = trim_ascii_ws_bytes(&slice[..colon]);
+    if name.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(name).into_owned())
+}
+
+fn trim_ascii_ws_bytes(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|b| *b != b' ' && *b != b'\t')
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| *b != b' ' && *b != b'\t')
+        .map(|i| i + 1)
+        .unwrap_or(start);
+    &bytes[start..end]
 }
 
 fn strip_line_ending(line: &[u8], allow_cr_line_end: bool) -> (usize, usize) {

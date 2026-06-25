@@ -98,6 +98,19 @@ pub trait MimeHandler {
         Ok(())
     }
 
+    /// Raw header bytes exactly as received, including fold CRLFs and the
+    /// terminating line ending. Called once per logical header, in order.
+    fn raw_header(&mut self, _name: &str, _raw_bytes: &[u8]) -> ParseResult<()> {
+        Ok(())
+    }
+
+    /// Raw body octets before transfer-decoding, one line at a time (including
+    /// the line ending). Emitted for every body line, including multipart
+    /// boundaries, before MIME body processing.
+    fn raw_body_content(&mut self, _content: &[u8]) -> ParseResult<()> {
+        Ok(())
+    }
+
     fn body_content(&mut self, _content: &[u8]) -> ParseResult<()> {
         Ok(())
     }

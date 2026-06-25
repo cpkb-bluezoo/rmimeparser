@@ -7,7 +7,7 @@ mod message_id_parser;
 mod obsolete_parser_utils;
 mod obsolete_structure_type;
 
-mod headers;
+pub(crate) mod headers;
 mod message_parser;
 
 pub use email_address::EmailAddress;
