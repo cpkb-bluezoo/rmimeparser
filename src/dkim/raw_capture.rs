@@ -1,6 +1,9 @@
-//! Accumulates raw headers and body bytes from parser callbacks.
+//! Accumulates raw headers and body bytes from the parser wire sink.
 
 use std::collections::HashMap;
+
+use crate::mime::error::ParseResult;
+use crate::mime::wire_sink::MimeWireSink;
 
 use super::raw_header::RawHeader;
 
@@ -73,5 +76,22 @@ impl RawCapture {
         self.raw_header_map.clear();
         self.raw_body.clear();
         self.headers_complete = false;
+    }
+}
+
+impl MimeWireSink for RawCapture {
+    fn raw_header(&mut self, name: &str, raw_bytes: &[u8]) -> ParseResult<()> {
+        self.add_raw_header(name, raw_bytes);
+        Ok(())
+    }
+
+    fn raw_body_content(&mut self, content: &[u8]) -> ParseResult<()> {
+        self.append_raw_body(content);
+        Ok(())
+    }
+
+    fn mark_headers_complete(&mut self) -> ParseResult<()> {
+        RawCapture::mark_headers_complete(self);
+        Ok(())
     }
 }

@@ -1,9 +1,9 @@
 [package]
 name = "rmimeparser"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.70"
-description = "Push-based MIME and RFC 5322 message parser (gumdrop-style)"
+description = "Push-based MIME and RFC 5322 message parser and writer (gumdrop-style)"
 readme = "README.md"
 license = "LGPL-2.1-or-later"
 repository = "https://github.com/cpkb-bluezoo/rmimeparser"

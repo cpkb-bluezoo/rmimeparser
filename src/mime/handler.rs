@@ -56,6 +56,10 @@ impl Locator for MimeLocator {
 }
 
 /// Callback interface for push-based MIME parsing events.
+///
+/// Override typed methods (`content_type`, `body_content`, …) for normal use.
+/// Wire-accurate header/body capture is not part of this trait—use
+/// [`crate::DkimMessageParser`] when you need raw bytes for DKIM.
 pub trait MimeHandler {
     fn set_locator(&mut self, _locator: &MimeLocator) -> ParseResult<()> {
         Ok(())
@@ -95,19 +99,6 @@ pub trait MimeHandler {
     }
 
     fn end_headers(&mut self) -> ParseResult<()> {
-        Ok(())
-    }
-
-    /// Raw header bytes exactly as received, including fold CRLFs and the
-    /// terminating line ending. Called once per logical header, in order.
-    fn raw_header(&mut self, _name: &str, _raw_bytes: &[u8]) -> ParseResult<()> {
-        Ok(())
-    }
-
-    /// Raw body octets before transfer-decoding, one line at a time (including
-    /// the line ending). Emitted for every body line, including multipart
-    /// boundaries, before MIME body processing.
-    fn raw_body_content(&mut self, _content: &[u8]) -> ParseResult<()> {
         Ok(())
     }
 

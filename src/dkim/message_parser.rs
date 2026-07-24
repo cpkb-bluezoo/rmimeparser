@@ -4,21 +4,24 @@ use std::mem::MaybeUninit;
 
 use crate::mime::error::ParseResult;
 use crate::mime::parser::MimeParser;
+use crate::rfc5322::message_parser::MessageBridge;
 use crate::MessageHandler;
 
-use super::capture_bridge::CaptureBridge;
+use super::raw_capture::RawCapture;
 use super::raw_header::RawHeader;
 
 struct DkimParserInner<'a, H: MessageHandler + ?Sized> {
-    bridge: CaptureBridge<'a, H>,
-    mime: MaybeUninit<MimeParser<'a, CaptureBridge<'a, H>>>,
+    capture: RawCapture,
+    bridge: MessageBridge<'a, H>,
+    mime: MaybeUninit<MimeParser<'a, MessageBridge<'a, H>>>,
 }
 
 /// RFC 5322 message parser that captures raw header and body bytes for DKIM.
 ///
-/// Mirrors gumdrop's `DKIMMessageParser`: raw headers are stored in order of
-/// appearance (including fold CRLFs), and the raw undecoded body is accumulated
-/// line-by-line before transfer-decoding.
+/// Use the same [`MessageHandler`] callbacks as [`crate::MessageParser`] for decoded
+/// headers and body. After parsing, read wire bytes from this parser via
+/// [`Self::raw_headers`] / [`Self::raw_body`] — do not implement raw callbacks on the
+/// handler (those are not part of the public handler API).
 pub struct DkimMessageParser<'a, H: MessageHandler + ?Sized> {
     inner: Box<DkimParserInner<'a, H>>,
 }
@@ -26,13 +29,17 @@ pub struct DkimMessageParser<'a, H: MessageHandler + ?Sized> {
 impl<'a, H: MessageHandler + ?Sized> DkimMessageParser<'a, H> {
     pub fn new(handler: &'a mut H) -> Self {
         let inner = Box::new(DkimParserInner {
-            bridge: CaptureBridge::new(handler),
+            capture: RawCapture::default(),
+            bridge: MessageBridge::new(handler),
             mime: MaybeUninit::uninit(),
         });
         let ptr = Box::into_raw(inner);
         unsafe {
             let bridge_ref = &mut (*ptr).bridge;
-            (*ptr).mime.write(MimeParser::new(bridge_ref));
+            let capture_ref = &mut (*ptr).capture;
+            (*ptr)
+                .mime
+                .write(MimeParser::with_wire(bridge_ref, capture_ref));
             Self {
                 inner: Box::from_raw(ptr),
             }
@@ -61,7 +68,7 @@ impl<'a, H: MessageHandler + ?Sized> DkimMessageParser<'a, H> {
         let mime = unsafe { self.inner.mime.assume_init_mut() };
         mime.reset();
         self.inner.bridge.state = crate::mime::parser::MessageHeaderState::default();
-        self.inner.bridge.capture.clear();
+        self.inner.capture.clear();
     }
 
     pub fn is_underflow(&self) -> bool {
@@ -70,30 +77,30 @@ impl<'a, H: MessageHandler + ?Sized> DkimMessageParser<'a, H> {
     }
 
     pub fn raw_headers(&self) -> &[RawHeader] {
-        self.inner.bridge.capture.raw_headers()
+        self.inner.capture.raw_headers()
     }
 
     pub fn raw_header(&self, name: &str) -> Option<&RawHeader> {
-        self.inner.bridge.capture.raw_header(name)
+        self.inner.capture.raw_header(name)
     }
 
     pub fn all_raw_headers(&self, name: &str) -> Vec<&RawHeader> {
-        self.inner.bridge.capture.all_raw_headers(name)
+        self.inner.capture.all_raw_headers(name)
     }
 
     pub fn header_bytes(&self, name: &str) -> Option<&[u8]> {
-        self.inner.bridge.capture.header_bytes(name)
+        self.inner.capture.header_bytes(name)
     }
 
     pub fn all_header_bytes(&self, name: &str) -> Vec<&[u8]> {
-        self.inner.bridge.capture.all_header_bytes(name)
+        self.inner.capture.all_header_bytes(name)
     }
 
     pub fn raw_body(&self) -> &[u8] {
-        self.inner.bridge.capture.raw_body()
+        self.inner.capture.raw_body()
     }
 
     pub fn is_headers_complete(&self) -> bool {
-        self.inner.bridge.capture.is_headers_complete()
+        self.inner.capture.is_headers_complete()
     }
 }

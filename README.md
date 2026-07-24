@@ -1,15 +1,16 @@
 # rmimeparser
 
-Push-based MIME and RFC 5322 message parser for Rust.
+Push-based MIME and RFC 5322 message parser and writer for Rust.
 
 **rmimeparser** ports the [gumdrop](https://github.com/cpkb-bluezoo/gumdrop) `org.bluezoo.gumdrop.mime` package tree to Rust, using the same design as [rprotobuf](https://github.com/cpkb-bluezoo/rprotobuf) and [jsonparser](https://github.com/cpkb-bluezoo/jsonparser):
 
 - Incremental `receive()` parsing — constant memory, streaming over fixed read buffers
 - Handler callbacks instead of materialised message domain objects
-- MIME core with RFC 5322 as an extension (`MessageParser` composes `MimeParser`)
+- Push `MimeWriter` / `MessageWriter` — constant memory, chunked `body_content`, no builder/DOM
+- MIME core with RFC 5322 as an extension (`MessageParser` / `MessageWriter` compose MIME)
 - Zero dependencies beyond the Rust standard library
 
-A unified MIME writer/handler may be added later. Gumdrop’s generation pieces (`RFC2047Encoder`, `MessageDateTimeFormatter`, `to_header_value()` on value types) are included for header encoding.
+Header encoding helpers (`RFC2047Encoder`, `MessageDateTimeFormatter`, `to_header_value()` on value types) are shared by the writers.
 
 ## MIME parser
 
@@ -34,6 +35,23 @@ let mut input = &raw[..];
 parser.receive(&mut input)?;
 parser.close()?;
 assert_eq!(handler.bytes, 7);
+```
+
+## MIME writer
+
+```rust
+use rmimeparser::{ContentType, MimeWriter};
+
+let mut out = Vec::new();
+let mut w = MimeWriter::new(&mut out);
+w.start_entity(None)?;
+w.content_type(&ContentType::new("text", "plain", None))?;
+w.content_transfer_encoding("base64")?;
+w.end_headers()?;
+w.body_content(b"Hello")?;
+w.body_content(b" world")?; // chunked; constant memory
+w.end_entity(None)?;
+w.close()?;
 ```
 
 ## RFC 5322 message parser
@@ -77,18 +95,18 @@ On underflow, `parser.is_underflow()` is true and `close()` may fail until more 
 
 | Rust module | Gumdrop Java |
 |-------------|--------------|
-| `mime` | `org.bluezoo.gumdrop.mime` — `MIMEParser`, handlers, CTE decoders, content types |
+| `mime` | `org.bluezoo.gumdrop.mime` — `MIMEParser`, handlers, CTE codecs, content types, `MimeWriter` |
 | `rfc2047` | `mime.rfc2047` — encoded-word decode/encode |
 | `rfc2231` | `mime.rfc2231` — extended parameter decode |
-| `rfc5322` | `mime.rfc5322` — `MessageParser`, addresses, dates, Message-ID |
+| `rfc5322` | `mime.rfc5322` — `MessageParser` / `MessageWriter`, addresses, dates, Message-ID |
 
 ## Relationship to other bluezoo libraries
 
 | Library | Format | Pattern |
 |---------|--------|---------|
 | [jsonparser](https://github.com/cpkb-bluezoo/jsonparser) | JSON | `JSONContentHandler` + `receive` |
-| [rprotobuf](https://github.com/cpkb-bluezoo/rprotobuf) | Protobuf | `Handler` + `receive` |
-| **rmimeparser** | MIME / RFC 5322 | `MimeHandler` / `MessageHandler` + `receive` |
+| [rprotobuf](https://github.com/cpkb-bluezoo/rprotobuf) | Protobuf | `Handler` + `receive` / `Writer` |
+| **rmimeparser** | MIME / RFC 5322 | `MimeHandler` / `MessageHandler` + `receive`; `MimeWriter` / `MessageWriter` |
 | [gumdrop](https://github.com/cpkb-bluezoo/gumdrop) | Protobuf (Java) | `ProtobufHandler` + `receive` |
 
 ## License
@@ -102,7 +120,7 @@ cargo test
 cargo doc --open
 ```
 
-The test suite ports gumdrop's MIME JUnit tests (368 integration tests across parser, decoders, content types, RFC 2047/2231, and RFC 5322).
+The test suite ports gumdrop's MIME JUnit tests and covers the writer (CTE encoders, folding, write-then-parse round trips).
 
 ## Publishing
 

@@ -16,6 +16,7 @@ use crate::mime::messages::{
 };
 use crate::mime::utils::{decode_header_bytes, decode_token_header_value, index_of, is_token,
                          is_valid_boundary};
+use crate::mime::wire_sink::MimeWireSink;
 
 const MAX_HEADER_LINE_LENGTH: usize = 998;
 const INITIAL_HEADER_VALUE_CAPACITY: usize = 1024;
@@ -54,6 +55,8 @@ enum TransferEncoding {
 /// Event-driven MIME parser with rprotobuf-style `receive(&mut &[u8])` contract.
 pub struct MimeParser<'a, H: MimeHandler + ?Sized> {
     handler: &'a mut H,
+    /// Optional wire sink for DKIM-style raw capture (not exposed on [`MimeHandler`]).
+    wire: Option<&'a mut dyn MimeWireSink>,
     locator: MimeLocator,
     state: State,
     boundaries: Vec<String>,
@@ -77,8 +80,20 @@ pub struct MimeParser<'a, H: MimeHandler + ?Sized> {
 
 impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
     pub fn new(handler: &'a mut H) -> Self {
+        Self::build(handler, None)
+    }
+
+    /// Like [`Self::new`], but also delivers wire-accurate header/body bytes to `wire`.
+    ///
+    /// Used by [`crate::DkimMessageParser`]; not part of the everyday handler API.
+    pub(crate) fn with_wire(handler: &'a mut H, wire: &'a mut dyn MimeWireSink) -> Self {
+        Self::build(handler, Some(wire))
+    }
+
+    fn build(handler: &'a mut H, wire: Option<&'a mut dyn MimeWireSink>) -> Self {
         Self {
             handler,
+            wire,
             locator: MimeLocator::default(),
             state: State::Init,
             boundaries: Vec::new(),
@@ -243,6 +258,9 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         if let Some(name) = self.header_name.take() {
             let value = std::mem::take(&mut self.header_value_sink);
             self.dispatch_header(&name, &value)?;
+        }
+        if let Some(wire) = self.wire.as_mut() {
+            wire.mark_headers_complete()?;
         }
         self.handler.end_headers()?;
         if self.boundary_set {
@@ -447,7 +465,9 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
             self.state,
             State::Body | State::FirstBoundary | State::BoundaryOrContent | State::BoundaryOnly
         ) {
-            self.handler.raw_body_content(line)?;
+            if let Some(wire) = self.wire.as_mut() {
+                wire.raw_body_content(line)?;
+            }
         }
 
         self.content_flushed = false;
@@ -694,7 +714,9 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
     fn flush_raw_header(&mut self) -> ParseResult<()> {
         if let Some(name) = self.header_raw_name.take() {
             if !self.header_raw_sink.is_empty() {
-                self.handler.raw_header(&name, &self.header_raw_sink)?;
+                if let Some(wire) = self.wire.as_mut() {
+                    wire.raw_header(&name, &self.header_raw_sink)?;
+                }
             }
             self.header_raw_sink.clear();
         }

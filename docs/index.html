@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rmimeparser — User Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #152018;
+      --muted: #4a5c52;
+      --line: #c8d4cc;
+      --paper: #f3f6f2;
+      --card: #ffffff;
+      --accent: #1f6b4a;
+      --accent-soft: #d8eee3;
+      --code-bg: #e8efe9;
+      --warn-bg: #fff6e8;
+      --warn-ink: #6b4a12;
+      --radius: 6px;
+      --max: 46rem;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Outfit", system-ui, sans-serif;
+      font-size: 1.05rem;
+      line-height: 1.65;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 80% 50% at 100% 0%, #dceee4 0%, transparent 55%),
+        radial-gradient(ellipse 60% 40% at 0% 20%, #e8efe4 0%, transparent 50%),
+        var(--paper);
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 0.15em;
+    }
+
+    a:hover { color: #0f4d34; }
+
+    .wrap {
+      max-width: calc(var(--max) + 14rem);
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+      display: grid;
+      grid-template-columns: 12rem 1fr;
+      gap: 2.5rem;
+      align-items: start;
+    }
+
+    nav {
+      position: sticky;
+      top: 1.25rem;
+      font-size: 0.9rem;
+    }
+
+    nav .brand {
+      font-weight: 700;
+      font-size: 1.05rem;
+      color: var(--ink);
+      text-decoration: none;
+      display: block;
+      margin-bottom: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+
+    nav ol {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      border-left: 2px solid var(--line);
+    }
+
+    nav a {
+      display: block;
+      padding: 0.3rem 0 0.3rem 0.85rem;
+      color: var(--muted);
+      text-decoration: none;
+      margin-left: -2px;
+      border-left: 2px solid transparent;
+    }
+
+    nav a:hover {
+      color: var(--ink);
+      border-left-color: var(--accent);
+    }
+
+    main { min-width: 0; max-width: var(--max); }
+
+    header.hero {
+      margin-bottom: 2.75rem;
+      padding-bottom: 1.75rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    header.hero h1 {
+      margin: 0 0 0.5rem;
+      font-size: clamp(2rem, 4vw, 2.75rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }
+
+    header.hero .tag {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.15rem;
+      max-width: 36rem;
+    }
+
+    h2 {
+      margin: 2.75rem 0 0.85rem;
+      font-size: 1.55rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      scroll-margin-top: 1.5rem;
+    }
+
+    h3 {
+      margin: 1.75rem 0 0.6rem;
+      font-size: 1.15rem;
+      font-weight: 600;
+      scroll-margin-top: 1.5rem;
+    }
+
+    p { margin: 0 0 1rem; }
+
+    ul, ol { margin: 0 0 1rem; padding-left: 1.25rem; }
+    li { margin-bottom: 0.35rem; }
+
+    code, kbd {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.88em;
+      background: var(--code-bg);
+      padding: 0.12em 0.35em;
+      border-radius: 3px;
+    }
+
+    pre {
+      margin: 0 0 1.25rem;
+      padding: 1rem 1.1rem;
+      overflow-x: auto;
+      background: #1a2420;
+      color: #e6f0ea;
+      border-radius: var(--radius);
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.82rem;
+      line-height: 1.55;
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .note {
+      margin: 0 0 1.25rem;
+      padding: 0.85rem 1rem;
+      background: var(--accent-soft);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      color: #1a3d2c;
+    }
+
+    .note.warn {
+      background: var(--warn-bg);
+      border-left-color: #c48a2a;
+      color: var(--warn-ink);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 1.25rem;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 0.55rem 0.65rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .callback {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 860px) {
+      .wrap {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+        padding-top: 1.5rem;
+      }
+      nav {
+        position: static;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      nav ol {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.15rem 0.75rem;
+        border: none;
+      }
+      nav a {
+        border: none;
+        padding: 0.2rem 0;
+        margin: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav aria-label="Contents">
+      <a class="brand" href="#top">rmimeparser</a>
+      <ol>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#handlers">Handlers</a></li>
+        <li><a href="#feeding">Feeding bytes</a></li>
+        <li><a href="#message-parser">Message parser</a></li>
+        <li><a href="#dkim">DKIM / raw wire</a></li>
+        <li><a href="#writer">Writer</a></li>
+        <li><a href="#multipart">Multipart</a></li>
+        <li><a href="#errors">Errors &amp; limits</a></li>
+      </ol>
+    </nav>
+
+    <main id="top">
+      <header class="hero">
+        <h1>rmimeparser</h1>
+        <p class="tag">
+          Push-based MIME and RFC&nbsp;5322 parsing and writing in Rust—
+          constant memory, no message DOM, stdlib only.
+        </p>
+      </header>
+
+      <section id="overview">
+        <h2>Overview</h2>
+        <p>
+          <strong>rmimeparser</strong> never builds a tree of parts. Instead you implement a
+          <em>handler</em> whose methods the parser calls as structure and content are recognised.
+          The writer is the inverse: you call the same style of event methods, and encoded wire
+          bytes stream into any <code>std::io::Write</code>.
+        </p>
+        <ul>
+          <li><code>MimeParser</code> + <code>MimeHandler</code> — MIME entities, CTE decoding, multipart</li>
+          <li><code>MessageParser</code> + <code>MessageHandler</code> — RFC&nbsp;5322 headers on top of MIME</li>
+          <li><code>DkimMessageParser</code> — same typed handler API, plus wire-byte accessors for DKIM</li>
+          <li><code>MimeWriter</code> / <code>MessageWriter</code> — safe serialization (folding, CTE, RFC&nbsp;2047)</li>
+        </ul>
+      </section>
+
+      <section id="handlers">
+        <h2>Implementing a handler</h2>
+        <p>
+          All <code>MimeHandler</code> methods have default no-op bodies. Override only what you need.
+          Return <code>Err(...)</code> from a callback to abort parsing.
+        </p>
+
+        <h3>Minimal example</h3>
+<pre><code>use rmimeparser::{MimeHandler, MimeParser, ParseResult};
+
+struct CountBody {
+    bytes: usize,
+}
+
+impl MimeHandler for CountBody {
+    fn body_content(&mut self, data: &[u8]) -&gt; ParseResult&lt;()&gt; {
+        self.bytes += data.len();
+        Ok(())
+    }
+}
+
+let raw = b"Content-Type: text/plain\r\n\r\nHello\r\n";
+let mut handler = CountBody { bytes: 0 };
+let mut parser = MimeParser::new(&amp;mut handler);
+let mut input = &amp;raw[..];
+parser.receive(&amp;mut input)?;
+parser.close()?;
+assert_eq!(handler.bytes, 7);</code></pre>
+
+        <h3>Callback order</h3>
+        <p>
+          For a simple (non-multipart) entity the parser drives your handler roughly like this:
+        </p>
+<pre><code>set_locator(...)
+start_entity(None)
+  typed header callbacks (content_type, … / header, date_header, …)
+  end_headers()
+  body_content(...)       // transfer-decoded octets (may be chunked)
+end_entity(None)          // from close()</code></pre>
+
+        <table>
+          <thead>
+            <tr><th>Callback</th><th>When</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="callback">set_locator</td>
+              <td>Once at start; locator tracks offset / line / column for errors.</td>
+            </tr>
+            <tr>
+              <td class="callback">start_entity</td>
+              <td>
+                Root: <code>None</code>. Multipart part: <code>Some(boundary)</code> when that part begins.
+              </td>
+            </tr>
+            <tr>
+              <td class="callback">pre_mime_header</td>
+              <td>
+                Every header before MIME-specific dispatch. Return <code>true</code> to skip default
+                MIME handling for that header (used by <code>MessageParser</code>).
+              </td>
+            </tr>
+            <tr>
+              <td class="callback">content_type</td>
+              <td>Parsed <code>Content-Type</code> (and similarly disposition, CTE, Content-ID, description, MIME-Version).</td>
+            </tr>
+            <tr>
+              <td class="callback">end_headers</td>
+              <td>Blank line after headers; body (or first multipart boundary) follows.</td>
+            </tr>
+            <tr>
+              <td class="callback">body_content</td>
+              <td>
+                Transfer-decoded body octets. May arrive in several calls—do not assume one shot.
+                Charset decoding of text parts is left to you (see <code>Content-Type</code> charset).
+              </td>
+            </tr>
+            <tr>
+              <td class="callback">unexpected_content</td>
+              <td>Preamble/epilogue-like content where a boundary was expected.</td>
+            </tr>
+            <tr>
+              <td class="callback">end_entity</td>
+              <td>Entity finished; multipart close uses <code>Some(boundary)</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="note">
+          Always prefer these typed callbacks. They deliver decoded strings and structured values.
+          Wire-accurate capture for DKIM is a separate entry point—see
+          <a href="#dkim">DKIM / raw wire</a>.
+        </div>
+      </section>
+
+      <section id="feeding">
+        <h2>Feeding the parser with bytes</h2>
+        <p>
+          Call <code>receive(&amp;mut slice)</code> repeatedly. The parser advances the slice past bytes it
+          has fully consumed. Leftover bytes at the front of the slice are an incomplete line
+          (underflow)—keep them and append the next read.
+        </p>
+
+        <h3>Streaming buffer loop</h3>
+<pre><code>use rmimeparser::{MimeHandler, MimeParser, ParseResult};
+
+fn parse_stream&lt;R: std::io::Read, H: MimeHandler&gt;(
+    reader: &amp;mut R,
+    handler: &amp;mut H,
+) -&gt; ParseResult&lt;()&gt; {
+    let mut parser = MimeParser::new(handler);
+    let mut buf = vec![0u8; 8192];
+    let mut filled = 0usize;
+
+    loop {
+        let n = reader.read(&amp;mut buf[filled..]).map_err(|e| {
+            rmimeparser::MimeParseError::new(e.to_string())
+        })?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+
+        let mut slice = &amp;buf[..filled];
+        parser.receive(&amp;mut slice)?;
+        let remaining = slice.len();
+        // Compact unconsumed bytes to the front of the buffer.
+        buf.copy_within(filled - remaining..filled, 0);
+        filled = remaining;
+    }
+
+    parser.close()
+}</code></pre>
+
+        <ul>
+          <li>
+            After <code>receive</code>, if <code>parser.is_underflow()</code> is true, more input is needed
+            before the current line is complete.
+          </li>
+          <li>
+            For a non-multipart body, <code>close()</code> may succeed even with trailing underflow
+            (end of stream). For headers or multipart, underflow on <code>close()</code> is an error.
+          </li>
+          <li>
+            You can also feed the entire message in one <code>receive</code> if it already sits in memory.
+          </li>
+        </ul>
+
+        <div class="note warn">
+          Always pass <code>&amp;mut &amp;[u8]</code> (a mutable reference to the slice). The parser rewrites
+          the slice to the unconsumed suffix; forgetting to compact leftovers will drop or
+          duplicate data on the next read.
+        </div>
+      </section>
+
+      <section id="message-parser">
+        <h2>RFC 5322 message parser</h2>
+        <p>
+          <code>MessageParser</code> wraps <code>MimeParser</code>. Implement <code>MessageHandler</code>
+          (which extends <code>MimeHandler</code>) to get typed address, date, and Message-ID headers
+          in addition to MIME callbacks.
+        </p>
+<pre><code>use rmimeparser::{MessageHandler, MessageParser, ParseResult};
+
+struct CollectSubject {
+    subject: Option&lt;String&gt;,
+}
+
+impl MessageHandler for CollectSubject {
+    fn header(&amp;mut self, name: &amp;str, value: &amp;str) -&gt; ParseResult&lt;()&gt; {
+        if name.eq_ignore_ascii_case("subject") {
+            self.subject = Some(value.to_string());
+        }
+        Ok(())
+    }
+}
+
+// MimeHandler methods keep their defaults unless you override them.
+impl rmimeparser::MimeHandler for CollectSubject {}
+
+let raw = b"Subject: hello\r\n\r\nHi\r\n";
+let mut handler = CollectSubject { subject: None };
+let mut parser = MessageParser::new(&amp;mut handler);
+let mut input = &amp;raw[..];
+parser.receive(&amp;mut input)?;
+parser.close()?;</code></pre>
+
+        <table>
+          <thead>
+            <tr><th>Callback</th><th>Typical headers</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="callback">header</td>
+              <td>Unstructured fields such as <code>Subject</code>, <code>Comments</code> (RFC&nbsp;2047 decoded).</td>
+            </tr>
+            <tr>
+              <td class="callback">address_header</td>
+              <td><code>From</code>, <code>To</code>, <code>Cc</code>, <code>Reply-To</code>, …</td>
+            </tr>
+            <tr>
+              <td class="callback">date_header</td>
+              <td><code>Date</code>, <code>Resent-Date</code>, …</td>
+            </tr>
+            <tr>
+              <td class="callback">message_id_header</td>
+              <td><code>Message-ID</code>, <code>In-Reply-To</code>, <code>References</code>, …</td>
+            </tr>
+            <tr>
+              <td class="callback">unexpected_header</td>
+              <td>Malformed values that could not be typed.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="dkim">
+        <h2>DKIM / raw wire capture</h2>
+        <p>
+          DKIM canonicalization needs the message <em>exactly as received</em> (folded header
+          bytes, undecoded body lines). That is intentionally <strong>not</strong> exposed on
+          <code>MimeHandler</code> / <code>MessageHandler</code>.
+        </p>
+        <p>
+          Use <code>DkimMessageParser</code> instead of <code>MessageParser</code>. You still implement
+          the same typed <code>MessageHandler</code> for decoded events. After
+          <code>receive</code> / <code>close</code>, read wire data from the <em>parser</em>:
+        </p>
+<pre><code>use rmimeparser::{DkimMessageParser, MessageHandler, MimeHandler, ParseResult};
+
+struct App;
+impl MimeHandler for App {}
+impl MessageHandler for App {}
+
+let mut handler = App;
+let mut parser = DkimMessageParser::new(&amp;mut handler);
+let mut input = &amp;raw[..];
+parser.receive(&amp;mut input)?;
+parser.close()?;
+
+// Decoded events already went to `handler`.
+// Wire bytes for DKIM:
+let headers = parser.raw_headers();      // &[RawHeader], folds preserved
+let body = parser.raw_body();            // undecoded body lines
+let from = parser.raw_header("from");    // Option&lt;&amp;RawHeader&gt;</code></pre>
+        <div class="note">
+          Everyday apps should keep using <code>MessageParser</code>. Reach for
+          <code>DkimMessageParser</code> only when you need canonicalization input.
+        </div>
+      </section>
+
+      <section id="writer">
+        <h2>Using the writer</h2>
+        <p>
+          <code>MimeWriter</code> and <code>MessageWriter</code> are push APIs—no builder or in-memory
+          message tree. You emit events; the writer folds headers, applies RFC&nbsp;2047 where needed,
+          and CTE-encodes body chunks as they arrive. Working memory stays small (encoder scratch
+          only).
+        </p>
+
+        <h3>Single part</h3>
+<pre><code>use rmimeparser::{ContentType, MimeWriter};
+
+let mut out = Vec::new();
+let mut w = MimeWriter::new(&amp;mut out);
+
+w.start_entity(None)?;
+w.content_type(&amp;ContentType::new("text", "plain", None))?;
+w.content_transfer_encoding("base64")?;
+w.end_headers()?;
+
+// Logical body octets — call as many times as you like.
+w.body_content(b"Hello")?;
+w.body_content(b" world")?;
+
+w.end_entity(None)?;
+w.close()?;</code></pre>
+
+        <ul>
+          <li>Declare <code>Content-Transfer-Encoding</code> before <code>end_headers</code>. Default is <code>7bit</code>.</li>
+          <li>
+            <code>body_content</code> takes <em>logical</em> bytes; the writer encodes to base64 / quoted-printable
+            when those CTEs are set. For <code>7bit</code>, high bytes and NULs are rejected.
+          </li>
+          <li>Finish every open entity with matching <code>end_entity</code>, then <code>close()</code>.</li>
+        </ul>
+        <p>
+          Advanced: <code>header_raw_value</code> / writer <code>raw_header</code> /
+          <code>raw_body_content</code> exist to emit already-encoded wire bytes. Prefer the typed
+          writer methods for normal construction.
+        </p>
+
+        <h3>RFC 5322 message writer</h3>
+<pre><code>use rmimeparser::{
+    ContentType, EmailAddress, MessageWriter, OffsetDateTime,
+};
+
+let mut out = Vec::new();
+let mut w = MessageWriter::new(&amp;mut out);
+
+w.start_entity(None)?;
+w.header("Subject", "Café")?;           // RFC 2047 as needed
+w.date_header("Date", OffsetDateTime::new(2024, 6, 15, 12, 0, 0, 0))?;
+w.address_header(
+    "From",
+    &amp;[EmailAddress::new(Some("Ada".into()), "ada", "example.com", false)],
+)?;
+w.content_type(&amp;ContentType::new("text", "plain", None))?;
+w.content_transfer_encoding("quoted-printable")?;
+w.end_headers()?;
+w.body_content("Hello café".as_bytes())?;
+w.end_entity(None)?;
+w.close()?;</code></pre>
+      </section>
+
+      <section id="multipart">
+        <h2>Multipart (parse and write)</h2>
+        <p>
+          On parse, each part is a nested <code>start_entity(Some(boundary))</code> …
+          <code>end_entity(Some(boundary))</code> sequence after the parent’s <code>end_headers</code>.
+        </p>
+        <p>On write, mirror that structure:</p>
+<pre><code>use rmimeparser::{ContentType, MimeVersion, MimeWriter, Parameter};
+
+let mut out = Vec::new();
+let mut w = MimeWriter::new(&amp;mut out);
+
+w.start_entity(None)?;
+w.mime_version(MimeVersion::V1_0)?;
+w.content_type(&amp;ContentType::new(
+    "multipart",
+    "mixed",
+    Some(vec![Parameter::new("boundary", "bound123")]),
+))?;
+w.end_headers()?;
+
+w.start_entity(Some("bound123"))?;
+w.content_type(&amp;ContentType::new("text", "plain", None))?;
+w.end_headers()?;
+w.body_content(b"Part one")?;
+w.end_entity(Some("bound123"))?;
+
+w.start_entity(Some("bound123"))?;
+w.content_type(&amp;ContentType::new("text", "plain", None))?;
+w.end_headers()?;
+w.body_content(b"Part two")?;
+w.end_entity(Some("bound123"))?;
+
+w.end_entity(None)?; // emits --bound123--
+w.close()?;</code></pre>
+
+        <div class="note warn">
+          The writer refuses <code>body_content</code> that would embed the active multipart boundary
+          (<code>\r\n--boundary</code>). Prefer base64 for binary parts under multipart.
+        </div>
+      </section>
+
+      <section id="errors">
+        <h2>Errors and limits</h2>
+        <ul>
+          <li>Parse failures use <code>MimeParseError</code> / <code>ParseResult</code> (often with locator position).</li>
+          <li>Write failures use <code>MimeWriteError</code> / <code>WriteResult</code> (I/O, invalid state, validation).</li>
+          <li>
+            Tunables on the parser include <code>set_max_buffer_size</code> and
+            <code>set_max_header_value_size</code> (default header value cap is 32&nbsp;KiB; physical header
+            lines must not exceed 998 octets).
+          </li>
+        </ul>
+        <p>
+          For API details generated from source, run <code>cargo doc --open</code>.
+        </p>
+      </section>
+
+      <footer>
+        rmimeparser — LGPL-2.1-or-later.
+        Companion to the crate README and <code>cargo doc</code> output.
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

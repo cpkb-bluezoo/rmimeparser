@@ -1,6 +1,5 @@
 //! DKIM raw byte capture (gumdrop `org.bluezoo.gumdrop.smtp.auth`).
 
-mod capture_bridge;
 mod message_parser;
 mod raw_capture;
 mod raw_header;

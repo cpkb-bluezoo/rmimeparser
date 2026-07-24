@@ -10,7 +10,7 @@ use crate::rfc5322::headers;
 use crate::rfc5322::message_handler::MessageHandler;
 
 /// Bridges [`MessageHandler`] to [`MimeHandler`] and dispatches RFC 5322 headers.
-pub struct MessageBridge<'a, H: MessageHandler + ?Sized> {
+pub(crate) struct MessageBridge<'a, H: MessageHandler + ?Sized> {
     pub(crate) inner: &'a mut H,
     pub(crate) state: MessageHeaderState,
     strip_header_whitespace: bool,
