@@ -18,14 +18,6 @@ fn decode_with_end_of_stream(encoded: &str) -> String {
     String::from_utf8(dst).unwrap()
 }
 
-fn decode_iso(encoded: &str) -> String {
-    let mut src = encoded.as_bytes();
-    let cap = estimate_qp_decoded_size(encoded.len());
-    let mut dst = Vec::with_capacity(cap);
-    decode_quoted_printable(&mut src, &mut dst, cap, false);
-    dst.iter().map(|&b| b as char).collect()
-}
-
 fn decode_iso_with_end_of_stream(encoded: &str) -> String {
     let mut src = encoded.as_bytes();
     let cap = estimate_qp_decoded_size(encoded.len());

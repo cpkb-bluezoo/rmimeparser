@@ -123,7 +123,7 @@ fn test_decode_limited_output() {
 fn test_estimate_decoded_size() {
     assert!(Base64Decoder::estimate_decoded_size(4) >= 3);
     assert!(Base64Decoder::estimate_decoded_size(100) >= 75);
-    assert!(Base64Decoder::estimate_decoded_size(0) >= 0);
+    assert_eq!(Base64Decoder::estimate_decoded_size(0), 4);
 }
 
 #[test]
