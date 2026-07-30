@@ -11,7 +11,7 @@ use super::raw_capture::RawCapture;
 use super::raw_header::RawHeader;
 
 struct DkimParserInner<'a, H: MessageHandler + ?Sized> {
-    capture: RawCapture,
+    capture: RawCapture<'a>,
     bridge: MessageBridge<'a, H>,
     mime: MaybeUninit<MimeParser<'a, MessageBridge<'a, H>>>,
 }
@@ -22,6 +22,14 @@ struct DkimParserInner<'a, H: MessageHandler + ?Sized> {
 /// headers and body. After parsing, read wire bytes from this parser via
 /// [`Self::raw_headers`] / [`Self::raw_body`] — do not implement raw callbacks on the
 /// handler (those are not part of the public handler API).
+///
+/// By default raw body bytes are retained in full (like raw headers) so
+/// [`Self::raw_body`] works after parsing — the same shape as before
+/// [`Self::set_body_sink`] existed. For large messages where retaining a
+/// second full copy of the body is undesirable (e.g. streaming DKIM
+/// verification/signing that only needs to feed a running digest), call
+/// [`Self::set_body_sink`] to divert body bytes to a caller-supplied
+/// callback instead.
 pub struct DkimMessageParser<'a, H: MessageHandler + ?Sized> {
     inner: Box<DkimParserInner<'a, H>>,
 }
@@ -98,6 +106,21 @@ impl<'a, H: MessageHandler + ?Sized> DkimMessageParser<'a, H> {
 
     pub fn raw_body(&self) -> &[u8] {
         self.inner.capture.raw_body()
+    }
+
+    /// Divert raw body bytes to `sink`, called once per body chunk in wire
+    /// order, instead of retaining them — see the type-level docs. Raw
+    /// headers are unaffected and still available via [`Self::raw_headers`]
+    /// after parsing (DKIM's `h=` header selection needs random access
+    /// across the whole ordered header set, which — unlike the body — stays
+    /// small for essentially all real messages).
+    ///
+    /// Call this before feeding any body bytes to [`Self::receive`]
+    /// (typically right after construction). [`Self::reset`] drops the
+    /// sink along with everything else it clears; install a fresh one
+    /// before reusing the parser for another message.
+    pub fn set_body_sink(&mut self, sink: impl FnMut(&[u8]) + 'a) {
+        self.inner.capture.set_body_sink(Box::new(sink));
     }
 
     pub fn is_headers_complete(&self) -> bool {
