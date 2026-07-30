@@ -1,6 +1,6 @@
 [package]
 name = "rmimeparser"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.70"
 description = "Push-based MIME and RFC 5322 message parser and writer (gumdrop-style)"
