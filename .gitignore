@@ -3,3 +3,6 @@ Cargo.lock
 **/*.rs.bk
 .DS_Store
 *~
+
+# External rspamd email corpus (cloned by the rspamd_corpus test)
+/target/rspamd-test-corpus/

@@ -16,6 +16,15 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 
+[features]
+# Opt-in harness that clones rspamd/rspamd-test-corpus and parses every .eml.
+rspamd-corpus = []
+
 [[test]]
 name = "mime_utils_test"
 path = "tests/tests/mime_utils_test.rs"
+
+[[test]]
+name = "rspamd_corpus"
+path = "tests/corpus/rspamd_corpus.rs"
+required-features = ["rspamd-corpus"]
