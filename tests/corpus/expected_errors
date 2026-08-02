@@ -1,0 +1,11 @@
+# Optional overrides for corpus messages that must return a parse Err, but where
+# the harness cannot prove malformation automatically.
+#
+# Format (TAB-separated):
+#   relative/path/from/corpus-root.eml<TAB>expected-error-substring
+#
+# Unclosed multipart (missing an exact `--boundary--` line) is detected
+# automatically and does not need an entry here.
+#
+# Example:
+# corpus/edge-cases/malformed/foo.eml	Illegal field-name

@@ -15,6 +15,7 @@ name = "rmimeparser"
 path = "src/lib.rs"
 
 [dev-dependencies]
+libtest-mimic = "0.8"
 
 [features]
 # Opt-in harness that clones rspamd/rspamd-test-corpus and parses every .eml.
@@ -28,3 +29,4 @@ path = "tests/tests/mime_utils_test.rs"
 name = "rspamd_corpus"
 path = "tests/corpus/rspamd_corpus.rs"
 required-features = ["rspamd-corpus"]
+harness = false

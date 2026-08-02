@@ -124,10 +124,17 @@ The test suite ports gumdrop's MIME JUnit tests and covers the writer (CTE encod
 
 ### Rspamd email corpus
 
-An opt-in harness clones the external [rspamd-test-corpus](https://github.com/rspamd/rspamd-test-corpus) (not vendored here) and checks that `MessageParser` does not panic on those messages:
+An opt-in harness clones the external [rspamd-test-corpus](https://github.com/rspamd/rspamd-test-corpus) (not vendored here) and registers **one test per `.eml`**:
+
+- **passed** — parse succeeds
+- **ignored** — non-mail skip, or parse `Err` that is justified (e.g. truncated multipart with no `--boundary--` line); the ignore reason shows the error
+- **failed** — panic, or parse `Err` on a message that does not appear malformed (parser bug)
+
+Optional overrides live in [`tests/corpus/expected_errors`](tests/corpus/expected_errors).
 
 ```bash
 cargo test --features rspamd-corpus --test rspamd_corpus
+cargo test --features rspamd-corpus --test rspamd_corpus corpus/spam/0023   # name filter
 ```
 
 By default the corpus is checked out under `target/rspamd-test-corpus`. Set `RSPAMD_TEST_CORPUS` to reuse an existing checkout.
