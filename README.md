@@ -152,5 +152,5 @@ cargo publish   # crates.io, when ready
 Or depend via git until the first release:
 
 ```toml
-rmimeparser = { git = "https://github.com/cpkb-bluezoo/rmimeparser", tag = "v0.2.0" }
+rmimeparser = { git = "https://github.com/cpkb-bluezoo/rmimeparser", tag = "v0.5.0" }
 ```
