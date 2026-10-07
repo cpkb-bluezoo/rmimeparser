@@ -533,3 +533,15 @@ fn test_address_quoted_display_name() {
     assert_eq!(addresses[0].address(), "alice@example.com");
     assert_eq!(addresses[0].display_name(), Some("Smith, Alice"));
 }
+
+#[test]
+fn test_date_header_with_trailing_comment() {
+    let content = "Date: Fri, 21 Nov 1997 09:55:06 -0600 (via relay)\r\n\r\nBody";
+    let mut handler = TestMessageHandler::new();
+    parse(content, &mut handler);
+
+    let date = handler.date_headers.get("Date").expect("Date header");
+    assert_eq!(date.year, 1997);
+    assert_eq!(date.hour, 9);
+    assert_eq!(date.offset_seconds, -6 * 3600);
+}

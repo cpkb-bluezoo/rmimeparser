@@ -44,3 +44,33 @@ fn test_parse_obsolete_two_digit_year() {
     let dt = dt.unwrap();
     assert_eq!(dt.year, 1997);
 }
+
+fn expected() -> OffsetDateTime {
+    OffsetDateTime::new(1997, 11, 21, 9, 55, 6, -6 * 3600)
+}
+
+#[test]
+fn test_parse_trailing_comment() {
+    let dt = MessageDateTimeFormatter::parse("Fri, 21 Nov 1997 09:55:06 -0600 (via relay)").unwrap();
+    assert_eq!(dt, expected());
+}
+
+#[test]
+fn test_parse_leading_and_nested_comments() {
+    let dt = MessageDateTimeFormatter::parse(
+        "(first) Fri, 21 Nov 1997 (mid) 09:55:06 -0600 (a (nested) \\) one)",
+    )
+    .unwrap();
+    assert_eq!(dt, expected());
+}
+
+#[test]
+fn test_parse_unterminated_comment_rejected() {
+    assert!(MessageDateTimeFormatter::parse("Fri, 21 Nov 1997 09:55:06 -0600 (oops").is_err());
+}
+
+#[test]
+fn test_parse_obsolete_trailing_comment() {
+    let dt = MessageDateTimeFormatter::parse_obsolete("Fri, 21 Nov 1997 09:55:06 CST (EST)").unwrap();
+    assert_eq!(dt, expected());
+}

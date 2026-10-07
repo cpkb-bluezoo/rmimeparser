@@ -78,14 +78,49 @@ impl MessageDateTimeFormatter {
     }
 
     pub fn parse(date_string: &str) -> Result<OffsetDateTime, ()> {
-        parse_date_time(date_string.trim(), false)
+        let stripped = strip_comments(date_string)?;
+        parse_date_time(stripped.trim(), false)
     }
 
     pub fn parse_obsolete(date_string: &str) -> Option<OffsetDateTime> {
-        let mut s = date_string.trim().to_string();
+        let stripped = strip_comments(date_string).ok()?;
+        let mut s = stripped.trim().to_string();
         s = convert_two_digit_year(&s);
         s = convert_obsolete_timezones(&s);
         parse_date_time(&s, true).ok()
+    }
+}
+
+/// Replaces each RFC 5322 comment (CFWS, §3.2.2) with a single space.
+/// Comments nest and may contain quoted-pairs; an unterminated comment is
+/// an error.
+fn strip_comments(input: &str) -> Result<String, ()> {
+    if !input.contains('(') {
+        return Ok(input.to_string());
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut depth = 0usize;
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '(' => {
+                if depth == 0 {
+                    out.push(' ');
+                }
+                depth += 1;
+            }
+            ')' if depth > 0 => depth -= 1,
+            '\\' if depth > 0 => {
+                chars.next();
+            }
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    if depth == 0 {
+        Ok(out)
+    } else {
+        Err(())
     }
 }
 
