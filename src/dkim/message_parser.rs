@@ -72,6 +72,12 @@ impl<'a, H: MessageHandler + ?Sized> DkimMessageParser<'a, H> {
         mime.close()
     }
 
+    /// Feed the last of the input and close; see [`MimeParser::finish`].
+    pub fn finish(&mut self, data: &mut &[u8]) -> ParseResult<()> {
+        let mime = unsafe { self.inner.mime.assume_init_mut() };
+        mime.finish(data)
+    }
+
     pub fn reset(&mut self) {
         let mime = unsafe { self.inner.mime.assume_init_mut() };
         mime.reset();

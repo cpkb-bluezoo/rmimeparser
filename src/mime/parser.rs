@@ -274,6 +274,8 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         }
 
         if self.header_active {
+            // Input ended inside the headers: the last one still counts.
+            self.flush_raw_header()?;
             self.end_headers()?;
         }
 

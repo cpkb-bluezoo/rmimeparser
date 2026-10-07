@@ -203,3 +203,49 @@ fn test_reset_drops_the_body_sink() {
     // ...and the second message's body was retained normally instead.
     assert_eq!(parser.raw_body(), b"second\r\n");
 }
+
+/// Stored mail often ends without a final line terminator; `finish` accepts
+/// an unterminated closing boundary where `receive` + `close` cannot.
+#[test]
+fn test_finish_accepts_unterminated_closing_boundary() {
+    let raw = b"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\nbody\r\n--b--";
+
+    let mut handler = CaptureHandler;
+    let mut parser = DkimMessageParser::new(&mut handler);
+    let mut input: &[u8] = raw;
+    parser.receive(&mut input).unwrap();
+    assert!(parser.close().is_err(), "close alone cannot see the closing boundary");
+
+    for step in [1usize, 7, raw.len()] {
+        let mut handler = CaptureHandler;
+        let mut parser = DkimMessageParser::new(&mut handler);
+        let mut pending: Vec<u8> = Vec::new();
+        let mut offset = 0;
+        while offset < raw.len() {
+            let end = (offset + step).min(raw.len());
+            pending.extend_from_slice(&raw[offset..end]);
+            offset = end;
+            let mut slice = pending.as_slice();
+            if offset == raw.len() {
+                parser.finish(&mut slice).unwrap();
+            } else {
+                parser.receive(&mut slice).unwrap();
+            }
+            let consumed = pending.len() - slice.len();
+            pending.drain(..consumed);
+        }
+        assert_eq!(parser.raw_body(), b"--b\r\nbody\r\n--b--", "step {step}");
+        assert_eq!(parser.raw_headers().len(), 1);
+    }
+}
+
+#[test]
+fn test_finish_keeps_final_header_line_without_terminator() {
+    let raw = b"Subject: hello\r\nX-Last: no terminator";
+    let mut handler = CaptureHandler;
+    let mut parser = DkimMessageParser::new(&mut handler);
+    let mut input: &[u8] = raw;
+    parser.finish(&mut input).unwrap();
+    assert_eq!(parser.raw_headers().len(), 2);
+    assert_eq!(parser.raw_headers()[1].bytes(), b"X-Last: no terminator");
+}
