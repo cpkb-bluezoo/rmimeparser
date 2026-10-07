@@ -6,6 +6,8 @@ use crate::rfc2047::decoder::Decoder;
 /// RFC 2047 §2 — an encoded-word MUST NOT be more than 75 characters long.
 pub const MAX_ENCODED_WORD_LENGTH: usize = 75;
 
+const HEX_UPPER: &[u8; 16] = b"0123456789ABCDEF";
+
 /// RFC 2047 encoded-word encoder.
 pub struct Encoder;
 
@@ -114,8 +116,11 @@ impl Encoder {
                         chunk_size = 1;
                     }
                     let chunk = &segment[offset..offset + chunk_size];
-                    let encoded = base64::encode(chunk);
-                    result.push_str(&format!("=?{charset}?B?{encoded}?="));
+                    result.push_str("=?");
+                    result.push_str(charset);
+                    result.push_str("?B?");
+                    base64::encode_into(chunk, &mut result);
+                    result.push_str("?=");
                     offset += chunk_size;
                 }
                 i = segment_end;
@@ -151,15 +156,18 @@ impl Encoder {
             if segment_end > i {
                 let mut j = i;
                 while j < segment_end {
-                    result.push_str(&format!("=?{charset}?Q?"));
-                    let word_start = result.len();
+                    result.push_str("=?");
+                    result.push_str(charset);
+                    result.push_str("?Q?");
                     let mut chars_used = 0usize;
                     while j < segment_end && chars_used + 3 <= max_encoded_chars {
-                        result.push_str(&format!("={:02X}", header[j]));
+                        let b = header[j];
+                        result.push('=');
+                        result.push(HEX_UPPER[(b >> 4) as usize] as char);
+                        result.push(HEX_UPPER[(b & 0x0f) as usize] as char);
                         chars_used += 3;
                         j += 1;
                     }
-                    let _ = word_start;
                     result.push_str("?=");
                 }
                 i = segment_end;

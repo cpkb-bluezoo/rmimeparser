@@ -2,7 +2,11 @@
 
 use std::io::Write;
 
+use super::encoders::Batch;
 use super::write_error::{MimeWriteError, WriteResult};
+
+/// Header lines are short; a small buffer turns the per-word writes into one.
+type HeaderBatch<'w, W> = Batch<'w, W, 1024>;
 
 /// Recommended maximum length of a header line (RFC 5322 §2.1.1).
 pub const SOFT_LINE_LIMIT: usize = 78;
@@ -18,20 +22,23 @@ pub const HARD_LINE_LIMIT: usize = 998;
 pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> WriteResult<()> {
     validate_header_name(name)?;
 
-    let name_prefix = format!("{name}: ");
-    if name_prefix.len() > HARD_LINE_LIMIT {
+    // "Name: "
+    let name_prefix_len = name.len() + 2;
+    if name_prefix_len > HARD_LINE_LIMIT {
         return Err(MimeWriteError::validation(format!(
             "header name too long: {name}"
         )));
     }
 
+    let mut out = HeaderBatch::new(out);
     let value_bytes = value.as_bytes();
-    let mut line_len = name_prefix.len();
-    out.write_all(name_prefix.as_bytes())?;
+    let mut line_len = name_prefix_len;
+    out.put(name.as_bytes())?;
+    out.put(b": ")?;
 
     if value_bytes.is_empty() {
-        out.write_all(b"\r\n")?;
-        return Ok(());
+        out.put(b"\r\n")?;
+        return out.flush();
     }
 
     let mut i = 0usize;
@@ -43,15 +50,15 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> Wr
         if atom.is_empty() {
             // Leading/trailing WSP or lone WSP: write as-is if it fits, else fold.
             let b = remaining[0];
-            if line_len + 1 > SOFT_LINE_LIMIT && line_len > name_prefix.len().min(1) {
-                fold_newline(out, &mut line_len)?;
+            if line_len + 1 > SOFT_LINE_LIMIT && line_len > name_prefix_len.min(1) {
+                fold_newline(&mut out, &mut line_len)?;
             }
             if line_len + 1 > HARD_LINE_LIMIT {
                 return Err(MimeWriteError::validation(
                     "header line exceeds 998 octets",
                 ));
             }
-            out.write_all(&[b])?;
+            out.put(&[b])?;
             line_len += 1;
             i += 1;
             continue;
@@ -64,8 +71,8 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> Wr
         {
             // Only fold if we are not at the very start of the field value on first line
             // with nothing written yet beyond "Name: ".
-            if line_len > name_prefix.len() || i > 0 {
-                fold_newline(out, &mut line_len)?;
+            if line_len > name_prefix_len || i > 0 {
+                fold_newline(&mut out, &mut line_len)?;
             }
         }
 
@@ -81,30 +88,30 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> Wr
             while offset < atom.len() {
                 let space = HARD_LINE_LIMIT.saturating_sub(line_len);
                 if space == 0 {
-                    fold_newline(out, &mut line_len)?;
+                    fold_newline(&mut out, &mut line_len)?;
                     continue;
                 }
                 let take = space.min(atom.len() - offset);
-                out.write_all(&atom[offset..offset + take])?;
+                out.put(&atom[offset..offset + take])?;
                 line_len += take;
                 offset += take;
                 if offset < atom.len() {
-                    fold_newline(out, &mut line_len)?;
+                    fold_newline(&mut out, &mut line_len)?;
                 }
             }
         } else {
-            out.write_all(atom)?;
+            out.put(atom)?;
             line_len += atom.len();
         }
         i += token_end;
     }
 
-    out.write_all(b"\r\n")?;
-    Ok(())
+    out.put(b"\r\n")?;
+    out.flush()
 }
 
-fn fold_newline<W: Write>(out: &mut W, line_len: &mut usize) -> WriteResult<()> {
-    out.write_all(b"\r\n ")?;
+fn fold_newline<W: Write>(out: &mut HeaderBatch<'_, W>, line_len: &mut usize) -> WriteResult<()> {
+    out.put(b"\r\n ")?;
     *line_len = 1; // continuation WSP
     Ok(())
 }

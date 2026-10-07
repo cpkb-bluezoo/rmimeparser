@@ -383,8 +383,10 @@ end_entity(None)          // from close()</code></pre>
         <h2>Feeding the parser with bytes</h2>
         <p>
           Call <code>receive(&amp;mut slice)</code> repeatedly. The parser advances the slice past bytes it
-          has fully consumed. Leftover bytes at the front of the slice are an incomplete line
-          (underflow)—keep them and append the next read.
+          has consumed. Header lines are parsed whole, so leftover bytes at the front of the slice are an
+          incomplete header line (underflow)—keep them and append the next read. Body bytes are consumed as
+          they arrive and delivered as zero-copy runs, so a body is never left in the slice and needs no
+          buffering on your side, whatever its line lengths.
         </p>
 
         <h3>Streaming buffer loop</h3>
@@ -421,11 +423,16 @@ fn parse_stream&lt;R: std::io::Read, H: MimeHandler&gt;(
         <ul>
           <li>
             After <code>receive</code>, if <code>parser.is_underflow()</code> is true, more input is needed
-            before the current line is complete.
+            before the current header line, or the current line of a multipart body, is complete (a
+            multipart line that might be a boundary, at most about 76 bytes, is the only body data the
+            parser holds back). A header line longer than 998 bytes is rejected as soon as that
+            length is exceeded, without waiting for its terminator.
           </li>
           <li>
             For a non-multipart body, <code>close()</code> may succeed even with trailing underflow
-            (end of stream). For headers or multipart, underflow on <code>close()</code> is an error.
+            (end of stream). For headers or multipart, underflow on <code>close()</code> is an error;
+            use <code>finish(&amp;mut slice)</code> when the input is known to be complete and may end
+            without a final line terminator.
           </li>
           <li>
             You can also feed the entire message in one <code>receive</code> if it already sits in memory.

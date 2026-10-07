@@ -545,3 +545,14 @@ fn test_date_header_with_trailing_comment() {
     assert_eq!(date.hour, 9);
     assert_eq!(date.offset_seconds, -6 * 3600);
 }
+
+/// A header whose name merely starts like a known one ("to", "cc") but is
+/// far longer is an ordinary unknown header, not an address header.
+#[test]
+fn test_long_header_name_is_not_mistaken_for_known_name() {
+    let content = "To-Be-Or-Not-To-Be-That-Is-The-Question: x@example.org\r\nCc-And-Then-Some-More-Characters-Here: y\r\nX-A-Very-Long-Custom-Header-Name-Indeed-Yes: hello\r\n\r\nBody";
+    let mut handler = TestMessageHandler::new();
+    parse(content, &mut handler);
+    assert!(handler.address_headers.is_empty(), "{:?}", handler.address_headers.keys().collect::<Vec<_>>());
+    assert_eq!(handler.unstructured_headers.get("X-A-Very-Long-Custom-Header-Name-Indeed-Yes").map(String::as_str), Some("hello"));
+}

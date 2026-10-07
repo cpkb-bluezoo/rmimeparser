@@ -119,3 +119,102 @@ fn qp_long_line_soft_breaks() {
     assert!(text.contains("=\r\n"));
     round_trip_qp(&data);
 }
+
+/// The byte-at-a-time quoted-printable algorithm the bulk fast path replaced.
+fn reference_qp(data: &[u8]) -> Vec<u8> {
+    const LIMIT: usize = 76;
+    let hex = b"0123456789ABCDEF";
+    let mut out = Vec::new();
+    let mut line_len = 0usize;
+    let mut pending: Option<u8> = None;
+    fn emit(out: &mut Vec<u8>, line_len: &mut usize, b: u8, encode: bool, hex: &[u8; 16]) {
+        let n = if encode { 3 } else { 1 };
+        if *line_len + n > LIMIT - 1 && *line_len > 0 {
+            out.extend_from_slice(b"=\r\n");
+            *line_len = 0;
+        }
+        if encode {
+            out.extend_from_slice(&[b'=', hex[(b >> 4) as usize], hex[(b & 15) as usize]]);
+            *line_len += 3;
+        } else {
+            out.push(b);
+            *line_len += 1;
+        }
+    }
+    let mut i = 0;
+    while i < data.len() {
+        let b = data[i];
+        if b == b'\r' && i + 1 < data.len() && data[i + 1] == b'\n' {
+            if let Some(w) = pending.take() {
+                emit(&mut out, &mut line_len, w, true, hex);
+            }
+            out.extend_from_slice(b"\r\n");
+            line_len = 0;
+            i += 2;
+        } else if b == b'\n' {
+            if let Some(w) = pending.take() {
+                emit(&mut out, &mut line_len, w, true, hex);
+            }
+            out.extend_from_slice(b"\r\n");
+            line_len = 0;
+            i += 1;
+        } else if b == b' ' || b == b'\t' {
+            if let Some(w) = pending.take() {
+                emit(&mut out, &mut line_len, w, false, hex);
+            }
+            pending = Some(b);
+            i += 1;
+        } else {
+            if let Some(w) = pending.take() {
+                emit(&mut out, &mut line_len, w, false, hex);
+            }
+            let enc = b == b'\r' || b > 126 || b < 32 || b == b'=';
+            emit(&mut out, &mut line_len, b, enc, hex);
+            i += 1;
+        }
+    }
+    if let Some(w) = pending.take() {
+        emit(&mut out, &mut line_len, w, true, hex);
+    }
+    out
+}
+
+#[test]
+fn quoted_printable_encoder_matches_byte_at_a_time_reference() {
+    // Deterministic pseudo-random inputs biased towards the interesting bytes.
+    let alphabet: &[u8] = b"abcXYZ019 \t\r\n=.-~\x00\x1f\x7f\x80\xff";
+    let mut state = 0x2545F491u32;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    for round in 0..300 {
+        let len = (next() % 400) as usize + (round % 5) * 100;
+        let data: Vec<u8> = (0..len)
+            .map(|_| {
+                if next() % 4 == 0 {
+                    alphabet[(next() as usize) % alphabet.len()]
+                } else {
+                    b'a' + (next() % 26) as u8
+                }
+            })
+            .collect();
+        let mut got = Vec::new();
+        encode_quoted_printable(&mut got, &data).unwrap();
+        assert_eq!(got, reference_qp(&data), "round {round} len {len}");
+
+        // Any chunking gives the same output.
+        let mut enc = QuotedPrintableEncoder::new();
+        let mut chunked = Vec::new();
+        let mut rest = data.as_slice();
+        while !rest.is_empty() {
+            let n = ((next() % 9) as usize + 1).min(rest.len());
+            enc.write(&mut chunked, &rest[..n]).unwrap();
+            rest = &rest[n..];
+        }
+        enc.finish(&mut chunked).unwrap();
+        assert_eq!(chunked, got, "chunked, round {round}");
+    }
+}

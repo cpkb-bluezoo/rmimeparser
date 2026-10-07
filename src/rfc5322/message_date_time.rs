@@ -94,9 +94,9 @@ impl MessageDateTimeFormatter {
 /// Replaces each RFC 5322 comment (CFWS, §3.2.2) with a single space.
 /// Comments nest and may contain quoted-pairs; an unterminated comment is
 /// an error.
-fn strip_comments(input: &str) -> Result<String, ()> {
+fn strip_comments(input: &str) -> Result<std::borrow::Cow<'_, str>, ()> {
     if !input.contains('(') {
-        return Ok(input.to_string());
+        return Ok(std::borrow::Cow::Borrowed(input));
     }
     let mut out = String::with_capacity(input.len());
     let mut depth = 0usize;
@@ -118,7 +118,7 @@ fn strip_comments(input: &str) -> Result<String, ()> {
         }
     }
     if depth == 0 {
-        Ok(out)
+        Ok(std::borrow::Cow::Owned(out))
     } else {
         Err(())
     }

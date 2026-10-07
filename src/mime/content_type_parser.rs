@@ -181,54 +181,61 @@ fn process_raw_params(
         return None;
     }
 
+    // RFC 2231 continuations and extended values need the maps below; most
+    // headers have no `*` parameters at all and skip them.
     let mut rfc2231_decoded: HashMap<String, String> = HashMap::new();
-    let mut continuation_ranges: HashMap<String, BTreeMap<usize, (usize, usize)>> =
-        HashMap::new();
+    if raw_params.iter().any(|r| r.name.contains('*')) {
+        let mut continuation_ranges: HashMap<String, BTreeMap<usize, (usize, usize)>> =
+            HashMap::new();
 
-    for r in &raw_params {
-        let name = &r.name;
-        if let Some(star_idx) = name.find('*') {
-            let after = &name[star_idx + 1..];
-            if !after.is_empty() && after.chars().all(|c| c.is_ascii_digit()) {
-                let base_name = name[..star_idx].to_string();
-                let index: usize = after.parse().unwrap_or(0);
-                continuation_ranges
-                    .entry(base_name)
-                    .or_default()
-                    .insert(index, (r.value_start, r.value_end));
+        for r in &raw_params {
+            let name = &r.name;
+            if let Some(star_idx) = name.find('*') {
+                let after = &name[star_idx + 1..];
+                if !after.is_empty() && after.chars().all(|c| c.is_ascii_digit()) {
+                    let base_name = name[..star_idx].to_string();
+                    let index: usize = after.parse().unwrap_or(0);
+                    continuation_ranges
+                        .entry(base_name)
+                        .or_default()
+                        .insert(index, (r.value_start, r.value_end));
+                    continue;
+                }
+            }
+            if name.ends_with('*') && name.len() > 1 {
+                let base_name = name[..name.len() - 1].to_string();
+                let mut slice = ByteCursor::from_slice(buf, r.value_start, r.value_end);
+                if let Some(decoded) = Rfc2231Decoder::decode_parameter_value(&mut slice, charset) {
+                    rfc2231_decoded.insert(base_name, decoded);
+                }
+            }
+        }
+
+        for (base_name, parts) in &continuation_ranges {
+            if rfc2231_decoded.contains_key(base_name) {
                 continue;
             }
-        }
-        if name.ends_with('*') && name.len() > 1 {
-            let base_name = name[..name.len() - 1].to_string();
-            let mut slice = ByteCursor::from_slice(buf, r.value_start, r.value_end);
-            if let Some(decoded) = Rfc2231Decoder::decode_parameter_value(&mut slice, charset) {
-                rfc2231_decoded.insert(base_name, decoded);
+            let mut combined = Vec::new();
+            for (_, (start, end)) in parts {
+                combined.extend_from_slice(&buf[*start..*end]);
+            }
+            let mut combined_buf = ByteCursor::new(&combined);
+            if let Some(decoded) =
+                Rfc2231Decoder::decode_parameter_value(&mut combined_buf, charset)
+            {
+                rfc2231_decoded.insert(base_name.clone(), decoded);
             }
         }
     }
 
-    for (base_name, parts) in &continuation_ranges {
-        if rfc2231_decoded.contains_key(base_name) {
-            continue;
-        }
-        let mut combined = Vec::new();
-        for (_, (start, end)) in parts {
-            combined.extend_from_slice(&buf[*start..*end]);
-        }
-        let mut combined_buf = ByteCursor::new(&combined);
-        if let Some(decoded) = Rfc2231Decoder::decode_parameter_value(&mut combined_buf, charset)
-        {
-            rfc2231_decoded.insert(base_name.clone(), decoded);
-        }
-    }
-
-    let mut parameters = Vec::new();
-    let mut seen: HashMap<String, ()> = HashMap::new();
-
-    for r in &raw_params {
-        let base_name = get_base_param_name(&r.name);
-        if seen.contains_key(&base_name) {
+    let mut parameters: Vec<Parameter> = Vec::with_capacity(raw_params.len());
+    for r in raw_params {
+        let base_name = if r.name.contains('*') {
+            get_base_param_name(&r.name)
+        } else {
+            r.name
+        };
+        if parameters.iter().any(|p| p.name() == base_name) {
             continue;
         }
         let final_value = if let Some(v) = rfc2231_decoded.get(&base_name) {
@@ -237,12 +244,11 @@ fn process_raw_params(
             let unescaped = unescape_quoted_value(buf, r.value_start, r.value_end);
             let mut slice = ByteCursor::new(&unescaped);
             let raw = decode_slice(&mut slice, charset);
-            Rfc2047Decoder::decode_encoded_words(&raw)
+            Rfc2047Decoder::decode_encoded_words_owned(raw)
         } else {
             let mut slice = ByteCursor::from_slice(buf, r.value_start, r.value_end);
             Rfc2047Decoder::decode_parameter_value(&mut slice, charset)
         };
-        seen.insert(base_name.clone(), ());
         parameters.push(Parameter::new(base_name, final_value));
     }
 

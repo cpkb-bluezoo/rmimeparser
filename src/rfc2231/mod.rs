@@ -46,14 +46,8 @@ impl Decoder {
             return Some(String::new());
         }
         let decoded_bytes = charset::percent_decode(&value.bytes()[encoded_start..encoded_end]);
-        let name = charset::normalize_charset_name(&charset);
-        let result = if name.eq_ignore_ascii_case("UTF-8") {
-            charset::decode_bytes(&decoded_bytes, HeaderCharset::Utf8)
-        } else if name.eq_ignore_ascii_case("ISO-8859-1") {
-            charset::decode_bytes(&decoded_bytes, HeaderCharset::Iso88591)
-        } else {
-            charset::decode_bytes_named(&decoded_bytes, &charset)
-        };
+        // UTF-8 and ISO-8859-1 are among the names `decode_bytes_named` knows.
+        let result = charset::decode_bytes_named(&decoded_bytes, &charset);
         value.set_position(limit);
         Some(result)
     }

@@ -1,41 +1,46 @@
-use std::sync::OnceLock;
-
 const WHITESPACE: i8 = -2;
 
-fn decode_table() -> &'static [i8; 256] {
-    static TABLE: OnceLock<[i8; 256]> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let mut t = [-1i8; 256];
-        t[b' ' as usize] = WHITESPACE;
-        t[b'\t' as usize] = WHITESPACE;
-        t[b'\r' as usize] = WHITESPACE;
-        t[b'\n' as usize] = WHITESPACE;
-        for i in 0..26u8 {
-            t[(b'A' + i) as usize] = i as i8;
-            t[(b'a' + i) as usize] = (26 + i) as i8;
-        }
-        for i in 0..10u8 {
-            t[(b'0' + i) as usize] = (52 + i) as i8;
-        }
-        t[b'+' as usize] = 62;
-        t[b'/' as usize] = 63;
-        t
-    })
-}
+const DECODE_TABLE: [i8; 256] = {
+    let mut t = [-1i8; 256];
+    t[b' ' as usize] = WHITESPACE;
+    t[b'\t' as usize] = WHITESPACE;
+    t[b'\r' as usize] = WHITESPACE;
+    t[b'\n' as usize] = WHITESPACE;
+    let mut i = 0u8;
+    while i < 26 {
+        t[(b'A' + i) as usize] = i as i8;
+        t[(b'a' + i) as usize] = (26 + i) as i8;
+        i += 1;
+    }
+    let mut i = 0u8;
+    while i < 10 {
+        t[(b'0' + i) as usize] = (52 + i) as i8;
+        i += 1;
+    }
+    t[b'+' as usize] = 62;
+    t[b'/' as usize] = 63;
+    t
+};
 
-fn hex_decode_table() -> &'static [i8; 256] {
-    static TABLE: OnceLock<[i8; 256]> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let mut t = [-1i8; 256];
-        for i in 0..10u8 {
-            t[(b'0' + i) as usize] = i as i8;
-        }
-        for i in 0..6u8 {
-            t[(b'A' + i) as usize] = (10 + i) as i8;
-            t[(b'a' + i) as usize] = (10 + i) as i8;
-        }
-        t
-    })
+const HEX_DECODE_TABLE: [i8; 256] = {
+    let mut t = [-1i8; 256];
+    let mut i = 0u8;
+    while i < 10 {
+        t[(b'0' + i) as usize] = i as i8;
+        i += 1;
+    }
+    let mut i = 0u8;
+    while i < 6 {
+        t[(b'A' + i) as usize] = (10 + i) as i8;
+        t[(b'a' + i) as usize] = (10 + i) as i8;
+        i += 1;
+    }
+    t
+};
+
+/// True for the 64 base64 alphabet characters (not `=` or whitespace).
+pub(crate) fn is_base64_char(b: u8) -> bool {
+    DECODE_TABLE[b as usize] >= 0
 }
 
 /// RFC 2045 §6.8 — maximum encoded line length.
@@ -128,7 +133,7 @@ pub fn decode_base64(
 
     while src_pos < start_len {
         let b = src[src_pos];
-        let val = decode_table()[b as usize];
+        let val = DECODE_TABLE[b as usize];
 
         if val >= 0 {
             quantum = (quantum << 6) | val as u32;
@@ -164,6 +169,11 @@ pub fn decode_base64(
         if quantum_bits >= 16 && dst.len() < dst_limit {
             dst.push((quantum >> (quantum_bits - 16)) as u8);
         }
+        last_valid_src_pos = src_pos;
+    } else if saw_padding && quantum_bits < 8 {
+        // Padding with nothing to emit (after a complete quantum, the second
+        // `=` of `==`, or after a lone character): consume it, or it would
+        // stall everything behind it.
         last_valid_src_pos = src_pos;
     }
 
@@ -201,8 +211,15 @@ pub fn decode_quoted_printable(
         let b = src[src_pos];
 
         if b != b'=' {
-            dst.push(b);
-            src_pos += 1;
+            // Copy the whole run up to the next escape (or the output limit).
+            let run_end = src[src_pos..start_len]
+                .iter()
+                .position(|&c| c == b'=')
+                .map_or(start_len, |p| src_pos + p);
+            let room = dst_limit - dst.len();
+            let n = (run_end - src_pos).min(room);
+            dst.extend_from_slice(&src[src_pos..src_pos + n]);
+            src_pos += n;
             continue;
         }
 
@@ -211,8 +228,8 @@ pub fn decode_quoted_printable(
         if remaining >= 2 {
             let hex1 = src[src_pos + 1];
             let hex2 = src[src_pos + 2];
-            let val1 = hex_decode_table()[hex1 as usize];
-            let val2 = hex_decode_table()[hex2 as usize];
+            let val1 = HEX_DECODE_TABLE[hex1 as usize];
+            let val2 = HEX_DECODE_TABLE[hex2 as usize];
 
             if val1 >= 0 && val2 >= 0 {
                 dst.push(((val1 as u8) << 4) | val2 as u8);

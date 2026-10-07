@@ -15,17 +15,21 @@ impl Decoder {
         if bytes.is_empty() {
             return String::new();
         }
+        // Plain ASCII without an encoded word decodes to itself.
+        if bytes.is_ascii() && !contains_encoded_word_start(bytes) {
+            return charset::bytes_to_iso88591(bytes);
+        }
         if smtp_utf8 {
             if let Ok(as_utf8) = std::str::from_utf8(bytes) {
                 if !contains_replacement_char(as_utf8) {
                     let decoded = Self::decode_encoded_words(as_utf8);
-                    return handle_raw_8bit_data(&decoded, true);
+                    return handle_raw_8bit_data(decoded, true);
                 }
             }
         }
-        let raw = charset::decode_bytes(bytes, HeaderCharset::Iso88591);
+        let raw = charset::bytes_to_iso88591(bytes);
         let decoded = Self::decode_encoded_words(&raw);
-        handle_raw_8bit_data(&decoded, smtp_utf8)
+        handle_raw_8bit_data(decoded, smtp_utf8)
     }
 
     pub fn decode_header_value_str(header_value: &str) -> String {
@@ -37,15 +41,15 @@ impl Decoder {
             return header_value.to_string();
         }
         let decoded = Self::decode_encoded_words(header_value);
-        handle_raw_8bit_data(&decoded, smtp_utf8)
+        handle_raw_8bit_data(decoded, smtp_utf8)
     }
 
     pub fn decode_encoded_words(input: &str) -> String {
-        if input.is_empty() {
+        if input.is_empty() || !input.contains("=?") {
             return input.to_string();
         }
 
-        let mut result = String::new();
+        let mut result = String::with_capacity(input.len());
         let mut adjacent_words: Vec<EncodedWord<'_>> = Vec::new();
         let mut pos = 0usize;
         let mut last_end = 0usize;
@@ -55,7 +59,7 @@ impl Decoder {
             if parser.start > last_end {
                 let before = &input[last_end..parser.start];
                 if !adjacent_words.is_empty() {
-                    result.push_str(&decode_adjacent_encoded_words(&adjacent_words));
+                    decode_adjacent_encoded_words(&adjacent_words, &mut result);
                     adjacent_words.clear();
                     if !is_whitespace_only(before) {
                         result.push_str(before);
@@ -78,7 +82,7 @@ impl Decoder {
             {
                 adjacent_words.push(word);
             } else {
-                result.push_str(&decode_adjacent_encoded_words(&adjacent_words));
+                decode_adjacent_encoded_words(&adjacent_words, &mut result);
                 adjacent_words.clear();
                 adjacent_words.push(word);
             }
@@ -88,12 +92,21 @@ impl Decoder {
         }
 
         if !adjacent_words.is_empty() {
-            result.push_str(&decode_adjacent_encoded_words(&adjacent_words));
+            decode_adjacent_encoded_words(&adjacent_words, &mut result);
         }
         if last_end < input.len() {
             result.push_str(&input[last_end..]);
         }
         result
+    }
+
+    /// [`Self::decode_encoded_words`] for an owned string: returns it
+    /// untouched (no copy) when it holds no encoded word.
+    pub fn decode_encoded_words_owned(input: String) -> String {
+        if !input.contains("=?") {
+            return input;
+        }
+        Self::decode_encoded_words(&input)
     }
 
     pub fn decode_unstructured_header_value(
@@ -147,15 +160,16 @@ impl Decoder {
             return String::new();
         }
         let raw = decode_buffer_segment(input.bytes(), start, end, charset);
-        let mut decoded = Self::decode_encoded_words(&raw);
+        let mut decoded = Self::decode_encoded_words_owned(raw);
         if decoded.len() >= 2
             && decoded.starts_with('"')
             && decoded.ends_with('"')
         {
-            decoded = decoded[1..decoded.len() - 1].to_string();
+            decoded.pop();
+            decoded.remove(0);
         }
         input.set_position(end);
-        decoded.trim().to_string()
+        charset::trim_owned(decoded)
     }
 
     pub fn decode_parameter_value(input: &mut ByteCursor<'_>, charset: HeaderCharset) -> String {
@@ -194,9 +208,9 @@ impl Decoder {
         let value_start = if quoted { start + 1 } else { start };
         let value_end = if quoted && end > start { end - 1 } else { end };
         let raw = decode_buffer_segment(input.bytes(), value_start, value_end, charset);
-        let decoded = Self::decode_encoded_words(&raw);
+        let decoded = Self::decode_encoded_words_owned(raw);
         input.set_position(end);
-        decoded.trim().to_string()
+        charset::trim_owned(decoded)
     }
 
     pub fn decode_rfc2231_parameter(param_value: &str) -> Option<String> {
@@ -283,8 +297,7 @@ struct EncodedWord<'a> {
     end: usize,
 }
 
-fn decode_adjacent_encoded_words(words: &[EncodedWord<'_>]) -> String {
-    let mut result = String::new();
+fn decode_adjacent_encoded_words(words: &[EncodedWord<'_>], result: &mut String) {
     for word in words {
         match decode_single_encoded_word(word.charset, word.encoding, word.encoded_text) {
             Ok(decoded) => result.push_str(&decoded),
@@ -299,7 +312,6 @@ fn decode_adjacent_encoded_words(words: &[EncodedWord<'_>]) -> String {
             }
         }
     }
-    result
 }
 
 fn decode_single_encoded_word(
@@ -324,6 +336,9 @@ fn decode_single_encoded_word(
 }
 
 fn decode_q_encoding(encoded: &str) -> Result<Vec<u8>, ()> {
+    if encoded.is_ascii() {
+        return Ok(decode_q_ascii(encoded.as_bytes()));
+    }
     let mut result = Vec::with_capacity(encoded.len());
     let chars: Vec<char> = encoded.chars().collect();
     let mut i = 0;
@@ -350,6 +365,34 @@ fn decode_q_encoding(encoded: &str) -> Result<Vec<u8>, ()> {
     Ok(result)
 }
 
+/// Q decoding of ASCII text, without widening it to `char`s.
+fn decode_q_ascii(bytes: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'_' {
+            result.push(b' ');
+            i += 1;
+        } else if b == b'=' && i + 2 < bytes.len() {
+            match (charset::hex_value(bytes[i + 1]), charset::hex_value(bytes[i + 2])) {
+                (Some(h), Some(l)) => {
+                    result.push((h << 4) | l);
+                    i += 3;
+                }
+                _ => {
+                    result.push(b);
+                    i += 1;
+                }
+            }
+        } else {
+            result.push(b);
+            i += 1;
+        }
+    }
+    result
+}
+
 fn fast_hex_decode(h1: char, h2: char) -> Option<u8> {
     let v1 = charset::hex_value(h1 as u8)?;
     let v2 = charset::hex_value(h2 as u8)?;
@@ -373,12 +416,12 @@ fn is_whitespace_only(text: &str) -> bool {
     text.chars().all(is_whitespace)
 }
 
-fn handle_raw_8bit_data(input: &str, smtp_utf8: bool) -> String {
-    if !has_non_ascii_data(input) {
-        return input.to_string();
+fn handle_raw_8bit_data(input: String, smtp_utf8: bool) -> String {
+    if !has_non_ascii_data(&input) {
+        return input;
     }
     if input.chars().any(|c| c > '\u{00FF}') {
-        return input.to_string();
+        return input;
     }
     let bytes: Vec<u8> = input.chars().map(|c| c as u8).collect();
     if smtp_utf8 {
@@ -397,8 +440,12 @@ fn handle_raw_8bit_data(input: &str, smtp_utf8: bool) -> String {
     charset::decode_bytes_named(&bytes, "windows-1252")
 }
 
+fn contains_encoded_word_start(bytes: &[u8]) -> bool {
+    bytes.windows(2).any(|w| w == b"=?")
+}
+
 fn has_non_ascii_data(input: &str) -> bool {
-    input.chars().any(|c| c == '\0' || c > '\u{007F}')
+    !input.is_ascii() || input.as_bytes().contains(&0)
 }
 
 fn contains_replacement_char(s: &str) -> bool {
@@ -442,7 +489,7 @@ fn decode_buffer_segment(bytes: &[u8], start: usize, end: usize, charset: Header
     if start >= end {
         return String::new();
     }
-    charset::decode_bytes(&bytes[start..end], charset).trim().to_string()
+    charset::trim_owned(charset::decode_bytes(&bytes[start..end], charset))
 }
 
 fn find_phrase_end(bytes: &[u8], from: usize, limit: usize, stop_bytes: &[u8]) -> usize {

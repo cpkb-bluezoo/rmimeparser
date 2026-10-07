@@ -104,3 +104,20 @@ fn test_parse_email_address_list_byte_buffer_bare_addr_spec() {
     assert_eq!(addrs[1].as_mailbox().unwrap().local_part(), "user1");
     assert_eq!(addrs[2].as_mailbox().unwrap().local_part(), "user2");
 }
+
+/// Parsing a long list must be linear: each address is scanned only up to
+/// its own end, never to the end of the whole list.
+#[test]
+fn test_parse_email_address_list_long_list_is_linear() {
+    let n = 30_000;
+    let list: Vec<String> = (0..n).map(|i| format!("user{i}@example.org")).collect();
+    let input = list.join(", ");
+    let start = std::time::Instant::now();
+    let addrs = EmailAddressParser::parse_email_address_list(&input).unwrap();
+    assert_eq!(addrs.len(), n);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "quadratic list parsing: {:?}",
+        start.elapsed()
+    );
+}

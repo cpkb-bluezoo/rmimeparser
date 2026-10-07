@@ -438,3 +438,43 @@ fn test_strict_mode_exactly76_chars() {
 fn test_max_line_length_constant() {
     assert_eq!(BASE64_MAX_LINE_LENGTH, 76);
 }
+
+/// Padding that has nothing to emit must still be consumed, or it stalls
+/// the stream behind it.
+#[test]
+fn test_padding_after_complete_quantum_is_consumed() {
+    let mut src: &[u8] = b"QUJD=QUJD";
+    let mut dst = Vec::new();
+    let first = decode_base64(&mut src, &mut dst, 100, false, false);
+    assert_eq!(first, 5, "the quantum and the `=`");
+    assert_eq!(dst, b"ABC");
+    assert_eq!(src, b"QUJD");
+}
+
+#[test]
+fn test_second_padding_character_is_consumed() {
+    let mut src: &[u8] = b"QQ==QUJD";
+    let mut dst = Vec::new();
+    let mut total = 0;
+    loop {
+        let n = decode_base64(&mut src, &mut dst, 100, false, false);
+        total += n;
+        if n == 0 {
+            break;
+        }
+    }
+    assert_eq!(dst, b"AABC");
+    assert_eq!(total, 8);
+    assert!(src.is_empty());
+}
+
+#[test]
+fn test_padding_after_a_lone_character_is_consumed() {
+    // One character cannot encode a byte; it is dropped with its padding.
+    let mut src: &[u8] = b"Q=QUJD";
+    let mut dst = Vec::new();
+    let first = decode_base64(&mut src, &mut dst, 100, false, false);
+    assert_eq!(first, 2);
+    assert!(dst.is_empty());
+    assert_eq!(src, b"QUJD");
+}

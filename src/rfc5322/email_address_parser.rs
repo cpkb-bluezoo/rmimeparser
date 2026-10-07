@@ -47,6 +47,17 @@ impl EmailAddressParser {
         value: &mut ByteCursor<'_>,
         charset: HeaderCharset,
     ) -> Option<Vec<Address>> {
+        let mailboxes = Self::parse_mailbox_list_bytes(value, charset)?;
+        Some(mailboxes.into_iter().map(Address::Mailbox).collect())
+    }
+
+    /// Like [`Self::parse_email_address_list_bytes`], but yields the mailboxes
+    /// directly (this parser never produces groups): header dispatch needs no
+    /// intermediate list.
+    pub(crate) fn parse_mailbox_list_bytes(
+        value: &mut ByteCursor<'_>,
+        charset: HeaderCharset,
+    ) -> Option<Vec<EmailAddress>> {
         if !value.has_remaining() {
             return Some(Vec::new());
         }
@@ -67,15 +78,15 @@ impl EmailAddressParser {
                 let stop = [b'<', b':', b',', b';'];
                 let name = Rfc2047Decoder::decode_display_name(value, charset, &stop);
                 if value.position() >= limit {
-                    if let Some(trimmed) = try_bare_addr_spec(&name) {
-                        addresses.push(Address::Mailbox(trimmed));
+                    if let Some(trimmed) = try_bare_addr_spec_owned(name) {
+                        addresses.push(trimmed);
                     }
                     break;
                 }
                 let b = value.get(value.position());
                 if b != b'<' {
-                    if let Some(addr) = try_bare_addr_spec(&name) {
-                        addresses.push(Address::Mailbox(addr));
+                    if let Some(addr) = try_bare_addr_spec_owned(name) {
+                        addresses.push(addr);
                         continue;
                     }
                     break;
@@ -108,12 +119,12 @@ impl EmailAddressParser {
                 break;
             }
             value.advance(1);
-            addresses.push(Address::Mailbox(EmailAddress::new(
+            addresses.push(EmailAddress::new(
                 display_name,
                 local_part,
                 domain,
                 false,
-            )));
+            ));
         }
         Some(addresses)
     }
@@ -164,26 +175,42 @@ impl EmailAddressParser {
     }
 }
 
-/// Where the list element starting at `from` ends: the next unquoted `,`
-/// or `;`, or `len`.
+/// Where the list element starting at `from` ends: the next unquoted,
+/// uncommented `,` or `;`, or `len`. One pass that stops at the first
+/// delimiter, so scanning a list stays linear.
 fn address_end(input: &[char], len: usize, from: usize) -> usize {
-    let comma = find_next_unquoted(input, len, ',', from).unwrap_or(len);
-    let semi = find_next_unquoted(input, len, ';', from).unwrap_or(len);
-    comma.min(semi)
+    let mut in_quotes = false;
+    let mut depth = 0;
+    for i in from..len {
+        let c = input[i];
+        if c == '"' && depth == 0 {
+            if i == 0 || input[i - 1] != '\\' {
+                in_quotes = !in_quotes;
+            }
+        } else if c == '(' && !in_quotes {
+            depth += 1;
+        } else if c == ')' && !in_quotes {
+            depth -= 1;
+        } else if (c == ',' || c == ';') && !in_quotes && depth == 0 {
+            return i;
+        }
+    }
+    len
 }
 
-fn try_bare_addr_spec(text: &str) -> Option<EmailAddress> {
+/// [`try_bare_addr_spec`] for an owned string: the local part reuses its
+/// allocation.
+fn try_bare_addr_spec_owned(mut text: String) -> Option<EmailAddress> {
     let trimmed = text.trim();
     let at = trimmed.rfind('@')?;
-    if at == 0 || at + 1 >= trimmed.len() {
+    if at == 0 || at + 1 >= trimmed.len() || trimmed.contains('<') || trimmed.contains('>') {
         return None;
     }
-    let local = &trimmed[..at];
-    let domain = &trimmed[at + 1..];
-    if trimmed.contains('<') || trimmed.contains('>') {
-        return None;
-    }
-    Some(EmailAddress::new(None, local, domain, true))
+    let lead = trimmed.as_ptr() as usize - text.as_ptr() as usize;
+    let domain = trimmed[at + 1..].to_string();
+    text.truncate(lead + at);
+    text.drain(..lead);
+    Some(EmailAddress::new(None, text, domain, true))
 }
 
 fn parse_address(

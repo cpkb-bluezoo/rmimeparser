@@ -34,9 +34,22 @@ pub fn normalize_charset_name(charset: &str) -> String {
 
 /// Decode `[position, limit)` and advance position to limit.
 pub fn decode_slice(cursor: &mut ByteCursor<'_>, charset: HeaderCharset) -> String {
-    let bytes = cursor.slice().to_vec();
+    let decoded = decode_bytes(cursor.slice(), charset);
     cursor.consume_to_limit();
-    decode_bytes(&bytes, charset).trim().to_string()
+    trim_owned(decoded)
+}
+
+/// `s.trim()` as an owned string, reusing `s`'s allocation.
+pub(crate) fn trim_owned(mut s: String) -> String {
+    let trimmed = s.trim();
+    if trimmed.len() == s.len() {
+        return s;
+    }
+    let end = trimmed.as_ptr() as usize - s.as_ptr() as usize + trimmed.len();
+    let start = end - trimmed.len();
+    s.truncate(end);
+    s.drain(..start);
+    s
 }
 
 pub fn decode_bytes(bytes: &[u8], charset: HeaderCharset) -> String {
@@ -46,16 +59,35 @@ pub fn decode_bytes(bytes: &[u8], charset: HeaderCharset) -> String {
     }
 }
 
+enum NamedCharset {
+    Utf8,
+    Windows1252,
+    Latin1,
+    Other,
+}
+
+/// The charsets [`normalize_charset_name`] folds together, recognised
+/// without building the normalised name.
+fn named_charset(name: &str) -> NamedCharset {
+    let name = name.trim();
+    let is = |candidates: &[&str]| candidates.iter().any(|c| name.eq_ignore_ascii_case(c));
+    if is(&["utf8", "utf-8"]) {
+        NamedCharset::Utf8
+    } else if is(&["win1252", "windows1252", "windows-1252"]) {
+        NamedCharset::Windows1252
+    } else if is(&["latin1", "iso88591", "iso-88591", "iso-8859-1"]) {
+        NamedCharset::Latin1
+    } else {
+        NamedCharset::Other
+    }
+}
+
 pub fn decode_bytes_named(bytes: &[u8], charset_name: &str) -> String {
-    let name = normalize_charset_name(charset_name);
-    if name.eq_ignore_ascii_case("UTF-8") {
-        return String::from_utf8_lossy(bytes).into_owned();
-    }
-    if name.eq_ignore_ascii_case("windows-1252") {
-        return bytes_to_windows1252(bytes);
-    }
-    if name.eq_ignore_ascii_case("ISO-8859-1") {
-        return bytes_to_iso88591(bytes);
+    match named_charset(charset_name) {
+        NamedCharset::Utf8 => return String::from_utf8_lossy(bytes).into_owned(),
+        NamedCharset::Windows1252 => return bytes_to_windows1252(bytes),
+        NamedCharset::Latin1 => return bytes_to_iso88591(bytes),
+        NamedCharset::Other => {}
     }
     // Fallback chain matching gumdrop behaviour.
     if let Ok(s) = std::str::from_utf8(bytes) {
@@ -66,15 +98,27 @@ pub fn decode_bytes_named(bytes: &[u8], charset_name: &str) -> String {
     bytes_to_iso88591(bytes)
 }
 
-fn bytes_to_iso88591(bytes: &[u8]) -> String {
-    bytes.iter().map(|&b| b as char).collect()
+pub(crate) fn bytes_to_iso88591(bytes: &[u8]) -> String {
+    if bytes.is_ascii() {
+        // ASCII is already valid UTF-8: one copy.
+        if let Ok(s) = std::str::from_utf8(bytes) {
+            return s.to_owned();
+        }
+    }
+    let mut out = String::with_capacity(bytes.len() + bytes.len() / 4);
+    out.extend(bytes.iter().map(|&b| b as char));
+    out
 }
 
 fn bytes_to_windows1252(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|&b| WINDOWS_1252[b as usize])
-        .collect()
+    if bytes.is_ascii() {
+        if let Ok(s) = std::str::from_utf8(bytes) {
+            return s.to_owned();
+        }
+    }
+    let mut out = String::with_capacity(bytes.len() + bytes.len() / 4);
+    out.extend(bytes.iter().map(|&b| WINDOWS_1252[b as usize]));
+    out
 }
 
 const WINDOWS_1252: [char; 256] = {
@@ -148,7 +192,7 @@ pub fn hex_value(b: u8) -> Option<u8> {
 
 pub mod base64 {
     pub fn decode(input: &str) -> Result<Vec<u8>, ()> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(input.len() / 4 * 3 + 3);
         let mut buf = 0u32;
         let mut bits = 0u32;
         for &b in input.as_bytes() {
@@ -168,9 +212,15 @@ pub mod base64 {
     }
 
     pub fn encode(data: &[u8]) -> String {
+        let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+        encode_into(data, &mut out);
+        out
+    }
+
+    /// Appends the padded base64 of `data` to `out`.
+    pub fn encode_into(data: &[u8], out: &mut String) {
         const TABLE: &[u8; 64] =
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::new();
         let mut i = 0;
         while i < data.len() {
             let b0 = data[i] as u32;
@@ -191,7 +241,6 @@ pub mod base64 {
             }
             i += 3;
         }
-        out
     }
 
     fn decode_char(c: u8) -> Option<u8> {
@@ -230,5 +279,70 @@ pub mod base64 {
 
     fn is_base64_char(c: u8) -> bool {
         matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/')
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pre-optimisation behaviour: normalise the name, then compare.
+    fn reference_decode_named(bytes: &[u8], charset_name: &str) -> String {
+        let name = normalize_charset_name(charset_name);
+        if name.eq_ignore_ascii_case("UTF-8") {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        if name.eq_ignore_ascii_case("windows-1252") {
+            return bytes_to_windows1252(bytes);
+        }
+        if name.eq_ignore_ascii_case("ISO-8859-1") {
+            return bytes.iter().map(|&b| b as char).collect();
+        }
+        if let Ok(s) = std::str::from_utf8(bytes) {
+            if !s.contains('\u{FFFD}') {
+                return s.to_string();
+            }
+        }
+        bytes.iter().map(|&b| b as char).collect()
+    }
+
+    #[test]
+    fn charset_names_resolve_as_before() {
+        let samples: [&[u8]; 4] = [b"plain", b"caf\xc3\xa9", b"caf\xe9 \x93q\x94", b""];
+        let names = [
+            "UTF8", "utf-8", "Utf-8", " utf-8 ", "WIN1252", "windows1252", "Windows-1252",
+            "windows-1252", "LATIN1", "latin1", "ISO88591", "iso-88591", "ISO-8859-1",
+            "iso-8859-1", "ISO-8859-15", "KOI8-R", "us-ascii", "", "shift_jis",
+        ];
+        for name in names {
+            for bytes in samples {
+                assert_eq!(
+                    decode_bytes_named(bytes, name),
+                    reference_decode_named(bytes, name),
+                    "{name:?} {bytes:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn trim_owned_matches_str_trim() {
+        let pieces = ["", " ", "a", "\u{a0}", "\u{85}", "\t", "\r\n", "é", " x y "];
+        for a in pieces {
+            for b in pieces {
+                for c in pieces {
+                    let s = format!("{a}{b}{c}");
+                    assert_eq!(trim_owned(s.clone()), s.trim(), "{s:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn latin1_decoding_matches_char_mapping() {
+        let all: Vec<u8> = (0..=255u8).collect();
+        let reference: String = all.iter().map(|&b| b as char).collect();
+        assert_eq!(bytes_to_iso88591(&all), reference);
+        assert_eq!(bytes_to_iso88591(b"ascii only"), "ascii only");
     }
 }

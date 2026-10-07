@@ -68,14 +68,12 @@ pub fn decode_header_bytes(data: &[u8], trim: bool, strip_header_whitespace: boo
     if data.is_empty() {
         return String::new();
     }
-    let mut s = String::with_capacity(data.len());
-    for &b in data {
-        s.push(b as char);
-    }
+    let s = crate::charset::bytes_to_iso88591(data);
     if trim && strip_header_whitespace {
-        s = s.trim().to_string();
+        crate::charset::trim_owned(s)
+    } else {
+        s
     }
-    s
 }
 
 /// Decodes the front of `data` as ISO-8859-1 and advances past the consumed segment.
@@ -126,7 +124,14 @@ pub fn decode_token_header_value(data: &mut &[u8], strip_header_whitespace: bool
         return String::new();
     }
 
-    let mut out = String::new();
+    // Unfolded values (the usual case) are a single segment.
+    if find_next_fold(data, 0, stop).is_none() {
+        let single = decode_slice(&mut &data[..]);
+        *data = &data[stop..];
+        return single;
+    }
+
+    let mut out = String::with_capacity(stop);
     while !data.is_empty() {
         let remaining = *data;
         let fold = find_next_fold(remaining, 0, remaining.len());
@@ -150,7 +155,7 @@ pub fn decode_token_header_value(data: &mut &[u8], strip_header_whitespace: bool
     }
 
     if strip_header_whitespace {
-        out.trim().to_string()
+        crate::charset::trim_owned(out)
     } else {
         out
     }

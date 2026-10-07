@@ -106,7 +106,17 @@ impl BoundaryScanner {
         if !self.active {
             return Ok(());
         }
-        for &b in data {
+        let mut i = 0usize;
+        while i < data.len() {
+            if !self.at_body_start && self.matched == 0 {
+                // Nothing in progress: jump to the next possible start (CR).
+                match data[i..].iter().position(|&b| b == b'\r') {
+                    Some(p) => i += p,
+                    None => return Ok(()),
+                }
+            }
+            let b = data[i];
+            i += 1;
             if self.at_body_start {
                 if b == self.start_needle[self.start_matched] {
                     self.start_matched += 1;
@@ -514,6 +524,18 @@ impl<W: Write> MimeWriter<W> {
         }
 
         while i < data.len() {
+            // Ordinary bytes go out as one run.
+            let rest = &data[i..];
+            let run = rest
+                .iter()
+                .position(|&b| b == 0 || b == b'\r' || b == b'\n' || (seven_bit && b >= 128))
+                .unwrap_or(rest.len());
+            if run > 0 {
+                self.write_raw(&rest[..run])?;
+                at_line_start = false;
+                i += run;
+                continue;
+            }
             let b = data[i];
             if b == 0 {
                 return Err(MimeWriteError::validation("NUL byte in body"));
@@ -536,14 +558,9 @@ impl<W: Write> MimeWriter<W> {
                 }
                 continue;
             }
-            if b == b'\n' {
-                self.write_raw(b"\r\n")?;
-                at_line_start = true;
-                i += 1;
-                continue;
-            }
-            self.write_raw(&[b])?;
-            at_line_start = false;
+            // LF
+            self.write_raw(b"\r\n")?;
+            at_line_start = true;
             i += 1;
         }
 

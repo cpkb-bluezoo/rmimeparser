@@ -1,7 +1,5 @@
 //! Accumulates raw headers and body bytes from the parser wire sink.
 
-use std::collections::HashMap;
-
 use crate::mime::error::ParseResult;
 use crate::mime::wire_sink::MimeWireSink;
 
@@ -14,7 +12,6 @@ type BodySink<'a> = Box<dyn FnMut(&[u8]) + 'a>;
 #[derive(Default)]
 pub struct RawCapture<'a> {
     raw_headers: Vec<RawHeader>,
-    raw_header_map: HashMap<String, Vec<usize>>,
     raw_body: Vec<u8>,
     headers_complete: bool,
     body_sink: Option<BodySink<'a>>,
@@ -33,13 +30,8 @@ impl<'a> std::fmt::Debug for RawCapture<'a> {
 
 impl<'a> RawCapture<'a> {
     pub fn add_raw_header(&mut self, name: &str, bytes: &[u8]) {
-        let header = RawHeader::new(name.to_string(), bytes.to_vec());
-        let index = self.raw_headers.len();
-        self.raw_headers.push(header);
-        self.raw_header_map
-            .entry(name.to_ascii_lowercase())
-            .or_default()
-            .push(index);
+        self.raw_headers
+            .push(RawHeader::new(name.to_string(), bytes.to_vec()));
     }
 
     /// Stream body bytes to `sink` as they arrive instead of retaining them
@@ -65,18 +57,19 @@ impl<'a> RawCapture<'a> {
         &self.raw_headers
     }
 
+    /// The first header called `name` (case-insensitive). A message has a
+    /// few dozen headers, so a scan beats keeping a lowercased index.
     pub fn raw_header(&self, name: &str) -> Option<&RawHeader> {
-        self.raw_header_map
-            .get(&name.to_ascii_lowercase())
-            .and_then(|indices| indices.first().copied())
-            .map(|index| &self.raw_headers[index])
+        self.raw_headers
+            .iter()
+            .find(|h| h.name().eq_ignore_ascii_case(name))
     }
 
     pub fn all_raw_headers(&self, name: &str) -> Vec<&RawHeader> {
-        self.raw_header_map
-            .get(&name.to_ascii_lowercase())
-            .map(|indices| indices.iter().map(|&i| &self.raw_headers[i]).collect())
-            .unwrap_or_default()
+        self.raw_headers
+            .iter()
+            .filter(|h| h.name().eq_ignore_ascii_case(name))
+            .collect()
     }
 
     pub fn header_bytes(&self, name: &str) -> Option<&[u8]> {
@@ -103,7 +96,6 @@ impl<'a> RawCapture<'a> {
     /// re-streaming a fresh message must call [`Self::set_body_sink`] again.
     pub fn clear(&mut self) {
         self.raw_headers.clear();
-        self.raw_header_map.clear();
         self.raw_body.clear();
         self.headers_complete = false;
         self.body_sink = None;

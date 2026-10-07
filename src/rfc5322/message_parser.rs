@@ -32,13 +32,12 @@ impl<H: MessageHandler + ?Sized> MimeHandler for MessageBridge<'_, H> {
     }
 
     fn pre_mime_header(&mut self, name: &str, value: &[u8]) -> ParseResult<bool> {
-        let mut value_vec = value.to_vec();
         headers::dispatch_rfc5322_header(
             self.strip_header_whitespace,
             &mut self.state,
             self.inner,
             name,
-            &mut value_vec,
+            value,
         )
     }
 

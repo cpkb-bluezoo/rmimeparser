@@ -6,9 +6,7 @@ use crate::mime::error::ParseResult;
 use crate::mime::parser::MessageHeaderState;
 use crate::mime::utils::{decode_header_bytes, decode_token_header_value};
 use crate::rfc2047::Decoder as Rfc2047Decoder;
-use crate::rfc5322::email_address::EmailAddress;
 use crate::rfc5322::email_address_parser::EmailAddressParser;
-use crate::rfc5322::group_email_address::Address;
 use crate::rfc5322::message_date_time::MessageDateTimeFormatter;
 use crate::rfc5322::message_handler::MessageHandler;
 use crate::rfc5322::message_id_parser::MessageIdParser;
@@ -20,10 +18,11 @@ pub fn dispatch_rfc5322_header<H: MessageHandler + ?Sized>(
     state: &mut MessageHeaderState,
     handler: &mut H,
     name: &str,
-    value: &mut Vec<u8>,
+    value: &[u8],
 ) -> ParseResult<bool> {
-    let lower = name.to_ascii_lowercase();
-    match lower.as_str() {
+    let mut buf = [0u8; LOWER_NAME_MAX];
+    let lower = lowercase_name(name, &mut buf);
+    match lower {
         "content-type"
         | "content-disposition"
         | "content-transfer-encoding"
@@ -64,7 +63,7 @@ pub fn dispatch_rfc5322_header<H: MessageHandler + ?Sized>(
             handler.header(name, &value_str)?;
             Ok(true)
         }
-        _ if is_unstructured_header(&lower) => {
+        _ if is_unstructured_header(lower) => {
             let value_str = decode_header_value_with_rfc2047(strip_header_whitespace, state, value);
             handler.header(name, &value_str)?;
             Ok(true)
@@ -105,8 +104,7 @@ fn handle_address_header<H: MessageHandler + ?Sized>(
 ) -> ParseResult<()> {
     let charset = header_charset(state);
     let mut cursor = ByteCursor::new(value);
-    if let Some(list) = EmailAddressParser::parse_email_address_list_bytes(&mut cursor, charset) {
-        let mailboxes = flatten_addresses(list);
+    if let Some(mailboxes) = EmailAddressParser::parse_mailbox_list_bytes(&mut cursor, charset) {
         if !mailboxes.is_empty() {
             handler.address_header(name, &mailboxes)?;
             return Ok(());
@@ -156,7 +154,7 @@ fn decode_header_value_with_rfc2047(
 ) -> String {
     let s = Rfc2047Decoder::decode_header_value_smtp_utf8(value, state.smtp_utf8);
     if strip_header_whitespace {
-        s.trim().to_string()
+        crate::charset::trim_owned(s)
     } else {
         s
     }
@@ -175,13 +173,23 @@ fn is_unstructured_header(lower_name: &str) -> bool {
         || lower_name.starts_with("x-")
 }
 
-fn flatten_addresses(list: Vec<Address>) -> Vec<EmailAddress> {
-    let mut out = Vec::new();
-    for addr in list {
-        match addr {
-            Address::Mailbox(m) => out.push(m),
-            Address::Group(g) => out.extend(g.members().iter().cloned()),
-        }
+/// Longest header name matched by [`dispatch_rfc5322_header`] other than the
+/// open-ended `x-` family.
+const LOWER_NAME_MAX: usize = 32;
+
+/// Lowercases `name` into `buf` without allocating. A name too long to be
+/// any known header is reduced to `"x-"` (the open-ended family) or to the
+/// empty string, neither of which matches a known name.
+fn lowercase_name<'b>(name: &str, buf: &'b mut [u8; LOWER_NAME_MAX]) -> &'b str {
+    let bytes = name.as_bytes();
+    if bytes.len() > LOWER_NAME_MAX {
+        return if bytes[..2].eq_ignore_ascii_case(b"x-") { "x-" } else { "" };
     }
-    out
+    let n = bytes.len();
+    for i in 0..n {
+        buf[i] = bytes[i].to_ascii_lowercase();
+    }
+    // Names are printable ASCII (validated by the parser); anything else
+    // simply matches nothing.
+    std::str::from_utf8(&buf[..n]).unwrap_or("")
 }

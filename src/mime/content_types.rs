@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 
 use super::parameter::Parameter;
@@ -8,7 +7,6 @@ pub struct ContentType {
     primary_type: String,
     sub_type: String,
     parameters: Option<Vec<Parameter>>,
-    parameter_map: Option<HashMap<String, String>>,
 }
 
 impl ContentType {
@@ -19,12 +17,11 @@ impl ContentType {
     ) -> Self {
         let primary_type = primary_type.into();
         let sub_type = sub_type.into();
-        let (parameters, parameter_map) = build_parameter_map(parameters);
+        let parameters = non_empty(parameters);
         Self {
             primary_type,
             sub_type,
             parameters,
-            parameter_map,
         }
     }
 
@@ -69,17 +66,13 @@ impl ContentType {
         self.parameter(name)
     }
 
+    /// The first parameter called `name` (case-insensitive).
     pub fn parameter(&self, name: &str) -> Option<&str> {
-        self.parameter_map
-            .as_ref()
-            .and_then(|m| m.get(&name.to_ascii_lowercase()))
-            .map(String::as_str)
+        find_parameter(&self.parameters, name)
     }
 
     pub fn has_parameter(&self, name: &str) -> bool {
-        self.parameter_map
-            .as_ref()
-            .is_some_and(|m| m.contains_key(&name.to_ascii_lowercase()))
+        self.parameter(name).is_some()
     }
 
     pub fn to_header_value(&self) -> String {
@@ -130,7 +123,6 @@ impl fmt::Display for ContentType {
 pub struct ContentDisposition {
     disposition_type: String,
     parameters: Option<Vec<Parameter>>,
-    parameter_map: Option<HashMap<String, String>>,
 }
 
 impl ContentDisposition {
@@ -139,11 +131,10 @@ impl ContentDisposition {
         parameters: Option<Vec<Parameter>>,
     ) -> Self {
         let disposition_type = disposition_type.into();
-        let (parameters, parameter_map) = build_parameter_map(parameters);
+        let parameters = non_empty(parameters);
         Self {
             disposition_type,
             parameters,
-            parameter_map,
         }
     }
 
@@ -164,17 +155,13 @@ impl ContentDisposition {
         self.parameter(name)
     }
 
+    /// The first parameter called `name` (case-insensitive).
     pub fn parameter(&self, name: &str) -> Option<&str> {
-        self.parameter_map
-            .as_ref()
-            .and_then(|m| m.get(&name.to_ascii_lowercase()))
-            .map(String::as_str)
+        find_parameter(&self.parameters, name)
     }
 
     pub fn has_parameter(&self, name: &str) -> bool {
-        self.parameter_map
-            .as_ref()
-            .is_some_and(|m| m.contains_key(&name.to_ascii_lowercase()))
+        self.parameter(name).is_some()
     }
 
     pub fn to_header_value(&self) -> String {
@@ -275,16 +262,15 @@ impl fmt::Display for MimeVersion {
     }
 }
 
-fn build_parameter_map(
-    parameters: Option<Vec<Parameter>>,
-) -> (Option<Vec<Parameter>>, Option<HashMap<String, String>>) {
-    let Some(parameters) = parameters.filter(|p| !p.is_empty()) else {
-        return (None, None);
-    };
-    let mut map = HashMap::new();
-    for p in &parameters {
-        map.entry(p.name().to_ascii_lowercase())
-            .or_insert_with(|| p.value().to_string());
-    }
-    (Some(parameters), Some(map))
+fn non_empty(parameters: Option<Vec<Parameter>>) -> Option<Vec<Parameter>> {
+    parameters.filter(|p| !p.is_empty())
+}
+
+/// Parameter lists are short; a scan beats hashing and allocating keys.
+fn find_parameter<'p>(parameters: &'p Option<Vec<Parameter>>, name: &str) -> Option<&'p str> {
+    parameters
+        .as_ref()?
+        .iter()
+        .find(|p| p.name().eq_ignore_ascii_case(name))
+        .map(Parameter::value)
 }
