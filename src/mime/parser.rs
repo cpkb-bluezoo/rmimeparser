@@ -5,7 +5,7 @@ use crate::charset::HeaderCharset;
 use crate::mime::content_type_parser::{ContentDispositionParser, ContentTypeParser};
 use crate::mime::content_types::MimeVersion;
 use crate::mime::content_id_parser::ContentIdParser;
-use crate::mime::decoders::{decode_base64, decode_quoted_printable};
+use crate::mime::decoders::{decode_base64, decode_quoted_printable, decode_uuencode};
 use crate::mime::error::{
     HeaderLineTooLongError, HeaderValueTooLongError, MimeParseError, ParseResult,
 };
@@ -50,6 +50,7 @@ enum TransferEncoding {
     Binary,
     Base64,
     QuotedPrintable,
+    Uuencode,
 }
 
 /// Event-driven MIME parser with rprotobuf-style `receive(&mut &[u8])` contract.
@@ -190,6 +191,27 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         *data = &bytes[start..];
         self.underflow = !data.is_empty();
         Ok(())
+    }
+
+    /// Feed the last of the input and close. Unlike [`Self::receive`]
+    /// followed by [`Self::close`], a final line that has no terminator is
+    /// still delivered: as body content, or as the closing boundary. Mail
+    /// stored in files and IMAP literals routinely end that way.
+    pub fn finish(&mut self, data: &mut &[u8]) -> ParseResult<()> {
+        self.receive(data)?;
+        if !data.is_empty() {
+            let line = *data;
+            *data = &[];
+            self.locator.offset += line.len() as i64;
+            self.locator.column_number += line.len() as i64;
+            match self.state {
+                State::Header => self.header_line(line)?,
+                State::Body => self.flush_body_content(line, false, false, true)?,
+                _ => self.body_line(line)?,
+            }
+            self.underflow = false;
+        }
+        self.close()
     }
 
     pub fn close(&mut self) -> ParseResult<()> {
@@ -425,6 +447,10 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
                 self.transfer_encoding = TransferEncoding::QuotedPrintable;
                 self.handler.content_transfer_encoding(&value_str)?;
             }
+            "x-uuencode" | "x-uue" | "uuencode" | "uue" => {
+                self.transfer_encoding = TransferEncoding::Uuencode;
+                self.handler.content_transfer_encoding(&value_str)?;
+            }
             "7bit" | "8bit" | "binary" => {
                 self.handler.content_transfer_encoding(&value_str)?;
             }
@@ -538,7 +564,7 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         end_of_stream: bool,
     ) -> ParseResult<()> {
         match self.transfer_encoding {
-            TransferEncoding::Base64 | TransferEncoding::QuotedPrintable => {
+            TransferEncoding::Base64 | TransferEncoding::QuotedPrintable | TransferEncoding::Uuencode => {
                 self.flush_body_content_with_decoding(
                     line,
                     unexpected,
@@ -581,6 +607,12 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
                     true,
                 ),
                 TransferEncoding::QuotedPrintable => decode_quoted_printable(
+                    &mut src,
+                    &mut self.decode_buffer,
+                    self.max_buffer_size,
+                    flush_remaining,
+                ),
+                TransferEncoding::Uuencode => decode_uuencode(
                     &mut src,
                     &mut self.decode_buffer,
                     self.max_buffer_size,

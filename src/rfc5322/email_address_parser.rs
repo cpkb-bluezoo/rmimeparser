@@ -164,6 +164,14 @@ impl EmailAddressParser {
     }
 }
 
+/// Where the list element starting at `from` ends: the next unquoted `,`
+/// or `;`, or `len`.
+fn address_end(input: &[char], len: usize, from: usize) -> usize {
+    let comma = find_next_unquoted(input, len, ',', from).unwrap_or(len);
+    let semi = find_next_unquoted(input, len, ';', from).unwrap_or(len);
+    comma.min(semi)
+}
+
 fn try_bare_addr_spec(text: &str) -> Option<EmailAddress> {
     let trimmed = text.trim();
     let at = trimmed.rfind('@')?;
@@ -189,8 +197,11 @@ fn parse_address(
     if *pos >= len {
         return None;
     }
-    let colon = find_next_unquoted(input, len, ':', *pos);
-    let angle = find_next_unquoted(input, len, '<', *pos);
+    // Only this address: a `<` or `:` in a later list element must not
+    // decide how this one is read.
+    let end = address_end(input, len, *pos);
+    let colon = find_next_unquoted(input, end, ':', *pos);
+    let angle = find_next_unquoted(input, end, '<', *pos);
     if colon.is_some() && (angle.is_none() || colon? < angle?) {
         let group = parse_group(input, len, pos, token, smtp_utf8)?;
         Some(Address::Group(group))
@@ -246,7 +257,7 @@ fn parse_individual_address(
         return None;
     }
     let mut display_name = None;
-    let angle_pos = find_next_unquoted(input, len, '<', *pos);
+    let angle_pos = find_next_unquoted(input, address_end(input, len, *pos), '<', *pos);
     let (local_part, domain, simple);
     if let Some(angle) = angle_pos {
         if angle > *pos {

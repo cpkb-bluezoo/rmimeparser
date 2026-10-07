@@ -260,3 +260,101 @@ pub fn decode_quoted_printable(
     *src = &src[consumed..];
     consumed
 }
+
+/// uuencode: bytes per encoded line (the classic `M` line).
+pub const UUENCODE_LINE_BYTES: usize = 45;
+
+/// Decoder for the historical uuencode transfer encoding (`x-uuencode`):
+/// `begin <mode> <name>`, encoded lines whose first character gives the
+/// byte count, a terminating "`" line, and `end`. Stateless, like
+/// [`Base64Decoder`]: each line stands alone, so decoding resumes at any
+/// line boundary and an incomplete trailing line waits for more input.
+pub struct UuencodeDecoder;
+
+impl UuencodeDecoder {
+    pub fn estimate_decoded_size(encoded_size: usize) -> usize {
+        estimate_uuencode_decoded_size(encoded_size)
+    }
+
+    pub fn decode(src: &mut &[u8], dst: &mut Vec<u8>, max: usize) -> usize {
+        decode_uuencode(src, dst, max, false)
+    }
+
+    pub fn decode_eos(src: &mut &[u8], dst: &mut Vec<u8>, max: usize, end_of_stream: bool) -> usize {
+        decode_uuencode(src, dst, max, end_of_stream)
+    }
+}
+
+/// Estimates the maximum decoded size for uuencode input.
+pub fn estimate_uuencode_decoded_size(encoded_size: usize) -> usize {
+    (encoded_size * 3) / 4 + 4
+}
+
+/// Decodes uuencode from the front of `src` into `dst`, producing at most
+/// `max` output bytes. Only whole lines are consumed: a line without its
+/// terminator is left in `src` for the next call unless `end_of_stream`.
+/// `begin`, `end`, blank and zero-length lines are skipped. Returns the
+/// number of input bytes consumed.
+pub fn decode_uuencode(src: &mut &[u8], dst: &mut Vec<u8>, max: usize, end_of_stream: bool) -> usize {
+    let dst_limit = dst.len().saturating_add(max);
+    let mut pos = 0usize;
+    let data = *src;
+
+    while pos < data.len() {
+        let rest = &data[pos..];
+        let (line, advance) = match rest.iter().position(|&b| b == b'\n') {
+            Some(nl) => (&rest[..nl], nl + 1),
+            None if end_of_stream => (rest, rest.len()),
+            None => break,
+        };
+        let line = match line.last() {
+            Some(b'\r') => &line[..line.len() - 1],
+            _ => line,
+        };
+        let n = uu_line_length(line);
+        if n > 0 {
+            if dst.len() + n > dst_limit {
+                // Not enough room for this whole line: leave it for later.
+                break;
+            }
+            decode_uu_line(line, n, dst);
+        }
+        pos += advance;
+    }
+
+    *src = &data[pos..];
+    pos
+}
+
+/// Decoded byte count a uuencode line carries, `0` for framing and blank
+/// lines.
+fn uu_line_length(line: &[u8]) -> usize {
+    if line.is_empty() || line.starts_with(b"begin ") || line == b"end" {
+        return 0;
+    }
+    ((line[0].wrapping_sub(32)) & 63) as usize
+}
+
+fn uu_char(c: Option<&u8>) -> u32 {
+    (c.copied().unwrap_or(b'`').wrapping_sub(32) & 63) as u32
+}
+
+/// Decode `n` bytes from the groups of four characters after the length.
+fn decode_uu_line(line: &[u8], n: usize, dst: &mut Vec<u8>) {
+    let mut produced = 0usize;
+    let mut i = 1usize;
+    while produced < n {
+        let g = (uu_char(line.get(i)) << 18)
+            | (uu_char(line.get(i + 1)) << 12)
+            | (uu_char(line.get(i + 2)) << 6)
+            | uu_char(line.get(i + 3));
+        for shift in [16u32, 8, 0] {
+            if produced == n {
+                break;
+            }
+            dst.push((g >> shift) as u8);
+            produced += 1;
+        }
+        i += 4;
+    }
+}

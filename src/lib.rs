@@ -20,10 +20,11 @@ pub use mime::{
     MimeLocator, MimeParseError, MimeParser, MimeVersion, MimeWriteError, MimeWriter, Parameter,
     ParseError, ParseResult, QuotedPrintableDecoder, QuotedPrintableEncoder, MIMEUtils,
     ParserLocator, WriteResult, decode_base64, decode_header_bytes, decode_quoted_printable,
-    decode_slice, decode_token_header_value, encode_base64, encode_quoted_printable,
-    estimate_base64_decoded_size, estimate_qp_decoded_size, index_of, is_special, is_token,
-    is_valid_boundary, write_folded_header, BASE64_MAX_LINE_LENGTH, HARD_LINE_LIMIT,
-    SOFT_LINE_LIMIT,
+    decode_slice, decode_token_header_value, decode_uuencode, encode_base64,
+    encode_quoted_printable, encode_uuencode, estimate_base64_decoded_size,
+    estimate_qp_decoded_size, estimate_uuencode_decoded_size, index_of, is_special, is_token,
+    is_valid_boundary, write_folded_header, UuencodeDecoder, UuencodeEncoder,
+    BASE64_MAX_LINE_LENGTH, HARD_LINE_LIMIT, SOFT_LINE_LIMIT, UUENCODE_LINE_BYTES,
 };
 pub use rfc2047::{Decoder as Rfc2047Decoder, Encoder as Rfc2047Encoder};
 pub use rfc2231::Decoder as Rfc2231Decoder;

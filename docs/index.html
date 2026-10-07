@@ -254,6 +254,7 @@
         <li><a href="#dkim">DKIM / raw wire</a></li>
         <li><a href="#writer">Writer</a></li>
         <li><a href="#multipart">Multipart</a></li>
+        <li><a href="#codecs">Transfer encodings</a></li>
         <li><a href="#errors">Errors &amp; limits</a></li>
       </ol>
     </nav>
@@ -641,6 +642,9 @@ w.close()?;</code></pre>
       </section>
 
       <section id="errors">
+        <h2 id="codecs">Transfer encodings</h2>
+        <p>The parser decodes <code>Content-Transfer-Encoding</code> bodies as the bytes arrive, so <code>body_content</code> always carries logical bytes: base64, quoted-printable and uuencode (<code>x-uuencode</code>, <code>x-uue</code>, <code>uuencode</code>, <code>uue</code>). Each codec is also a standalone push decoder with one calling convention: <code>decode_base64</code>, <code>decode_quoted_printable</code> and <code>decode_uuencode</code> take <code>(src: &amp;mut &amp;[u8], dst: &amp;mut Vec&lt;u8&gt;, max, end_of_stream)</code>, consume as much of <code>src</code> as they can turn into at most <code>max</code> output bytes, and leave an incomplete trailing unit (a base64 quantum, a soft line break, a uuencode line) in <code>src</code> for the next call unless <code>end_of_stream</code> is set. The <code>Base64Decoder</code>, <code>QuotedPrintableDecoder</code> and <code>UuencodeDecoder</code> types are the same functions behind a name, with <code>estimate_decoded_size</code> for sizing the output.</p>
+        <p>The encoders stream too: <code>Base64Encoder</code>, <code>QuotedPrintableEncoder</code> and <code>UuencodeEncoder</code> take <code>write(out, data)</code> in any chunking and <code>finish(out)</code>, holding at most one partial unit; <code>encode_base64</code>, <code>encode_quoted_printable</code> and <code>encode_uuencode(out, filename, mode, data)</code> do a whole buffer in one call. uuencode's <code>begin</code> line is written on the first <code>write</code>, the "`" and <code>end</code> lines by <code>finish</code>. <code>MimeWriter</code> drives the base64 and quoted-printable encoders itself; a uuencode body needs the filename for its <code>begin</code> line, so it is written with <code>raw_body_content</code> from <code>UuencodeEncoder</code> output.</p>
         <h2>Errors and limits</h2>
         <ul>
           <li>Parse failures use <code>MimeParseError</code> / <code>ParseResult</code> (often with locator position).</li>

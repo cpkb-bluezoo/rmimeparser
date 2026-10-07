@@ -8,6 +8,7 @@ Push-based MIME and RFC 5322 message parser and writer for Rust.
 - Handler callbacks instead of materialised message domain objects
 - Push `MimeWriter` / `MessageWriter` — constant memory, chunked `body_content`, no builder/DOM
 - MIME core with RFC 5322 as an extension (`MessageParser` / `MessageWriter` compose MIME)
+- Content-Transfer-Encoding codecs for base64, quoted-printable and uuencode (`x-uuencode`): the parser decodes bodies as they stream, and each codec is available on its own as a push decoder and a streaming encoder
 - Zero dependencies beyond the Rust standard library
 
 Header encoding helpers (`RFC2047Encoder`, `MessageDateTimeFormatter`, `to_header_value()` on value types) are shared by the writers.
@@ -89,7 +90,7 @@ loop {
 }
 ```
 
-On underflow, `parser.is_underflow()` is true and `close()` may fail until more data arrives (except non-multipart body EOF).
+On underflow, `parser.is_underflow()` is true and `close()` may fail until more data arrives (except non-multipart body EOF). When the input is known to be complete, call `finish(&mut slice)` instead of the last `receive` plus `close()`: a final line without its terminator is then delivered as body content or recognised as the closing boundary, which files and IMAP literals often need.
 
 ## Package layout
 

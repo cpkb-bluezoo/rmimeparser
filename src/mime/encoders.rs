@@ -220,3 +220,102 @@ pub fn encode_quoted_printable<W: Write>(out: &mut W, data: &[u8]) -> WriteResul
     enc.write(out, data)?;
     enc.finish(out)
 }
+
+/// Streaming uuencode encoder: `begin <mode> <name>` on the first write,
+/// 45-byte lines, then "`" and `end` on [`Self::finish`]. Retains at most
+/// one partial line of input.
+pub struct UuencodeEncoder {
+    begin: Option<String>,
+    pending: [u8; super::decoders::UUENCODE_LINE_BYTES],
+    pending_len: usize,
+}
+
+impl UuencodeEncoder {
+    /// `mode` is the Unix permission bits written in octal (`0o644` is the
+    /// usual choice); line breaks in `filename` are replaced.
+    pub fn new(filename: &str, mode: u32) -> Self {
+        let name: String = filename
+            .chars()
+            .map(|c| if c == '\r' || c == '\n' { '_' } else { c })
+            .collect();
+        Self {
+            begin: Some(format!("begin {:o} {}\r\n", mode & 0o7777, name)),
+            pending: [0; super::decoders::UUENCODE_LINE_BYTES],
+            pending_len: 0,
+        }
+    }
+
+    fn write_begin<W: Write>(&mut self, out: &mut W) -> WriteResult<()> {
+        if let Some(b) = self.begin.take() {
+            out.write_all(b.as_bytes())?;
+        }
+        Ok(())
+    }
+
+    pub fn write<W: Write>(&mut self, out: &mut W, mut data: &[u8]) -> WriteResult<()> {
+        self.write_begin(out)?;
+        let line = super::decoders::UUENCODE_LINE_BYTES;
+        while !data.is_empty() {
+            let take = (line - self.pending_len).min(data.len());
+            self.pending[self.pending_len..self.pending_len + take].copy_from_slice(&data[..take]);
+            self.pending_len += take;
+            data = &data[take..];
+            if self.pending_len == line {
+                let full = self.pending;
+                self.pending_len = 0;
+                encode_uu_line(out, &full)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Flush the last partial line and write the "`" and `end` lines.
+    pub fn finish<W: Write>(&mut self, out: &mut W) -> WriteResult<()> {
+        self.write_begin(out)?;
+        if self.pending_len > 0 {
+            let n = self.pending_len;
+            let last = self.pending;
+            self.pending_len = 0;
+            encode_uu_line(out, &last[..n])?;
+        }
+        out.write_all(b"`\r\nend\r\n")?;
+        Ok(())
+    }
+}
+
+fn uu_encode_char(v: u32) -> u8 {
+    // 0 is written as "`" rather than a space, the conventional choice so
+    // lines never end in whitespace that transports might trim.
+    if v == 0 {
+        b'`'
+    } else {
+        (v as u8) + 32
+    }
+}
+
+/// One encoded line for up to 45 bytes: length character, groups of four,
+/// CRLF.
+fn encode_uu_line<W: Write>(out: &mut W, bytes: &[u8]) -> WriteResult<()> {
+    let mut line = Vec::with_capacity(2 + (bytes.len() + 2) / 3 * 4 + 2);
+    line.push((bytes.len() as u8) + 32);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let g = (b0 << 16) | (b1 << 8) | b2;
+        line.push(uu_encode_char((g >> 18) & 63));
+        line.push(uu_encode_char((g >> 12) & 63));
+        line.push(uu_encode_char((g >> 6) & 63));
+        line.push(uu_encode_char(g & 63));
+    }
+    line.extend_from_slice(b"\r\n");
+    out.write_all(&line)?;
+    Ok(())
+}
+
+/// Encode `data` as one complete uuencode section (`begin` … `end`).
+pub fn encode_uuencode<W: Write>(out: &mut W, filename: &str, mode: u32, data: &[u8]) -> WriteResult<()> {
+    let mut enc = UuencodeEncoder::new(filename, mode);
+    enc.write(out, data)?;
+    enc.finish(out)
+}

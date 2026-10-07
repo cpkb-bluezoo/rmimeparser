@@ -20,11 +20,13 @@ pub use content_types::{
 pub use content_type_parser::{ContentDispositionParser, ContentTypeParser};
 pub use content_id_parser::ContentIdParser;
 pub use decoders::{
-    decode_base64, decode_quoted_printable, estimate_base64_decoded_size,
-    estimate_qp_decoded_size, Base64Decoder, QuotedPrintableDecoder, BASE64_MAX_LINE_LENGTH,
+    decode_base64, decode_quoted_printable, decode_uuencode, estimate_base64_decoded_size,
+    estimate_qp_decoded_size, estimate_uuencode_decoded_size, Base64Decoder,
+    QuotedPrintableDecoder, UuencodeDecoder, BASE64_MAX_LINE_LENGTH, UUENCODE_LINE_BYTES,
 };
 pub use encoders::{
-    encode_base64, encode_quoted_printable, Base64Encoder, QuotedPrintableEncoder,
+    encode_base64, encode_quoted_printable, encode_uuencode, Base64Encoder,
+    QuotedPrintableEncoder, UuencodeEncoder,
 };
 pub use error::{
     HeaderLineTooLongError, HeaderValueTooLongError, MimeParseError, ParseResult,
