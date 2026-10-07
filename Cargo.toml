@@ -14,9 +14,6 @@ categories = ["email", "parser-implementations"]
 name = "rmimeparser"
 path = "src/lib.rs"
 
-[dev-dependencies]
-libtest-mimic = "0.8"
-
 [features]
 # Opt-in harness that clones rspamd/rspamd-test-corpus and parses every .eml.
 rspamd-corpus = []

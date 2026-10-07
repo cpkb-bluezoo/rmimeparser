@@ -1,6 +1,7 @@
 //! Opt-in harness against the external [rspamd-test-corpus](https://github.com/rspamd/rspamd-test-corpus).
 //!
-//! One libtest trial per `.eml`. Run with:
+//! A plain `main` (no libtest harness, no dependencies) that parses every `.eml`.
+//! Run with:
 //! ```bash
 //! cargo test --features rspamd-corpus --test rspamd_corpus
 //! ```
@@ -8,22 +9,20 @@
 //! Corpus root defaults to `$CARGO_MANIFEST_DIR/target/rspamd-test-corpus` and is
 //! cloned on demand. Override with `RSPAMD_TEST_CORPUS`.
 //!
-//! Summary mapping:
-//! - **passed** — parsed without error
-//! - **ignored** — non-mail skip, or parse `Err` justified by a structural malformation check
-//!   (reason shows the error). See `tests/corpus/expected_errors` for overrides.
-//! - **failed** — panic, or parse `Err` on a message that does not appear malformed
-//! - **filtered out** — excluded by a name filter (`cargo test … ham/0001`)
-//! - **measured** — benchmark trials only; always 0 here
+//! Each file is reported under one outcome; skipped and failed files are listed by path:
+//! - **passed** - parsed without error
+//! - **skipped** - non-mail, or parse `Err` justified by a structural malformation check
+//!   (the error is shown). See `tests/corpus/expected_errors` for overrides.
+//! - **failed** - panic, or parse `Err` on a message that does not appear malformed.
+//!   The process exits non-zero if any file fails.
 
 use std::collections::HashMap;
 use std::fs;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitCode};
 use std::sync::OnceLock;
 
-use libtest_mimic::{Arguments, Completion, Failed, Trial};
 use rmimeparser::{MessageHandler, MessageParser, MimeHandler};
 
 const CORPUS_REPO: &str = "https://github.com/rspamd/rspamd-test-corpus.git";
@@ -45,64 +44,84 @@ struct Sink;
 impl MimeHandler for Sink {}
 impl MessageHandler for Sink {}
 
-fn main() {
-    let args = Arguments::from_args();
+enum Outcome {
+    Passed,
+    Skipped(String),
+    Failed(String),
+}
+
+fn main() -> ExitCode {
     let root = ensure_corpus();
     let files = collect_emls(&root);
     assert!(
         !files.is_empty(),
-        "no .eml files under {} (expected corpus/…)",
+        "no .eml files under {} (expected corpus/...)",
         root.display()
     );
 
-    let trials: Vec<Trial> = files
-        .into_iter()
-        .map(|path| {
-            let name = trial_name(&root, &path);
-            let rel = name.clone();
-            Trial::ignorable_test(name, move || run_one(&path, &rel))
-        })
-        .collect();
+    let (mut passed, mut skipped, mut failed) = (0usize, 0usize, 0usize);
+    for path in &files {
+        let rel = relative_name(&root, path);
+        match run_one(path, &rel) {
+            Outcome::Passed => passed += 1,
+            Outcome::Skipped(reason) => {
+                skipped += 1;
+                println!("skipped {rel}: {reason}");
+            }
+            Outcome::Failed(reason) => {
+                failed += 1;
+                println!("FAILED  {rel}: {reason}");
+            }
+        }
+    }
 
-    libtest_mimic::run(&args, trials).exit();
+    println!(
+        "\ncorpus result: {} files, {passed} passed, {skipped} skipped, {failed} failed",
+        files.len()
+    );
+    if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
-fn trial_name(root: &Path, path: &Path) -> String {
+fn relative_name(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
 }
 
-fn run_one(path: &Path, rel: &str) -> Result<Completion, Failed> {
-    let raw = fs::read(path).map_err(|e| Failed::from(format!("read {}: {e}", path.display())))?;
+fn run_one(path: &Path, rel: &str) -> Outcome {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(e) => return Outcome::Failed(format!("read {}: {e}", path.display())),
+    };
 
     if !looks_like_email(&raw) {
-        return Ok(Completion::ignored_with("not an email"));
+        return Outcome::Skipped("not an email".to_string());
     }
 
     let prepared = strip_mbox_from_in_headers(&raw);
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| parse_message(&prepared)));
     match outcome {
-        Ok(Ok(())) => {
-            if let Some(substr) = expected_errors().get(rel) {
-                Err(Failed::from(format!(
-                    "expected parse error matching {substr:?} but parse succeeded"
-                )))
-            } else {
-                Ok(Completion::Completed)
-            }
-        }
+        Ok(Ok(())) => match expected_errors().get(rel) {
+            Some(substr) => Outcome::Failed(format!(
+                "expected parse error matching {substr:?} but parse succeeded"
+            )),
+            None => Outcome::Passed,
+        },
         Ok(Err(e)) => {
             if parse_error_is_justified(rel, &prepared, &e) {
-                Ok(Completion::ignored_with(format!("malformed: {e}")))
+                Outcome::Skipped(format!("malformed: {e}"))
             } else {
-                Err(Failed::from(format!(
+                Outcome::Failed(format!(
                     "unexpected parse error (message does not appear malformed): {e}"
-                )))
+                ))
             }
         }
-        Err(payload) => Err(Failed::from(format!("panic: {}", panic_message(payload)))),
+        Err(payload) => Outcome::Failed(format!("panic: {}", panic_message(payload))),
     }
 }
 
