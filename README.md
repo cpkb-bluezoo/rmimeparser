@@ -112,7 +112,8 @@ Only header lines are left in the slice: a partial header line stays at its fron
 
 ## License
 
-LGPL-2.1-or-later (see [LICENSE](LICENSE)).
+GNU Lesser General Public License version 3 or later (see [LICENSE](LICENSE), which
+incorporates the GNU General Public License version 3 in [LICENSE-GPL](LICENSE-GPL)).
 
 ## Development
 
