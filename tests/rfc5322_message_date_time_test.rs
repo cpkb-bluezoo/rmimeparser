@@ -76,3 +76,27 @@ fn test_parse_obsolete_trailing_comment() {
         MessageDateTimeFormatter::parse_obsolete("Fri, 21 Nov 1997 09:55:06 CST (EST)").unwrap();
     assert_eq!(dt, expected());
 }
+
+/// Non-ASCII text in a date must never be able to panic the parser: the
+/// obsolete-syntax recovery used to slice a string in the middle of a character.
+#[test]
+fn non_ascii_text_in_an_obsolete_date_is_not_a_panic() {
+    for text in [
+        "Tue, 6 Oct 2026 10:00:00 \u{e9}",
+        "\u{e9}UTC",
+        "6 Oct 2026 10:00 \u{65e5}\u{672c}GMT",
+        "GMT\u{1f600}",
+        "Tue, 6 Oct 2026 10:00:00 EST\u{e9}",
+        "caf\u{e9} EST",
+    ] {
+        assert!(
+            MessageDateTimeFormatter::parse_obsolete(text).is_none(),
+            "{text:?}"
+        );
+    }
+    // and a good obsolete date with non-ASCII in a comment still reads
+    let date = MessageDateTimeFormatter::parse_obsolete("6 Oct 2026 10:00:00 EST (\u{e9}t\u{e9})")
+        .unwrap();
+    assert_eq!(date.hour, 10);
+    assert_eq!(date.offset_seconds, -5 * 3600);
+}

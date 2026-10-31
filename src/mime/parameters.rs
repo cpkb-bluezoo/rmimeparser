@@ -576,7 +576,6 @@ impl ParameterParser {
 
     /// Percent-encoded bytes of an extended value.
     fn extended_bytes(&mut self, bytes: &[u8], sink: &mut impl ParameterSink) -> ParseResult<()> {
-        self.decoded.clear();
         for &b in bytes {
             match self.percent {
                 0 if b == b'%' => self.percent = 1,
@@ -624,6 +623,12 @@ impl ParameterParser {
         } else if self.percent != 0 {
             // a percent sign cut short by the end of a segment is text
             self.flush_percent();
+            self.scratch.clear();
+            let mut decoded = std::mem::take(&mut self.decoded);
+            self.bytes.feed(&decoded, &mut self.scratch);
+            decoded.clear();
+            self.decoded = decoded;
+            self.emit_scratch(sink)?;
         }
         self.route = Route::None;
         Ok(())

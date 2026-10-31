@@ -277,3 +277,112 @@ fn a_writer_can_be_reset_and_reused() {
     assert_eq!(w.bytes_written(), 0);
     w.start_entity(&mut ring, None).unwrap();
 }
+
+// ---- raw bodies and the message writer through a small ring ----
+
+#[test]
+fn a_raw_body_goes_through_a_small_ring_in_pieces_and_arrives_whole() {
+    let data: Vec<u8> = (0..3000u32).map(|i| b'a' + (i % 26) as u8).collect();
+    for capacity in [64usize, 100, 4096] {
+        let mut ring = LoopBuf::with_capacity(capacity);
+        let mut sink = Vec::new();
+        let mut w = MimeWriter::new();
+        w.start_entity(&mut ring, None).unwrap();
+        w.content_transfer_encoding(&mut ring, "binary").unwrap();
+        w.end_headers(&mut ring).unwrap();
+        drain(&mut ring, &mut sink);
+        let header_len = sink.len();
+        let mut rest = &data[..];
+        let mut calls = 0;
+        while !rest.is_empty() {
+            let taken = call(&mut ring, &mut sink, |r| w.raw_body_content(r, rest));
+            assert!(taken > 0);
+            rest = &rest[taken..];
+            calls += 1;
+        }
+        w.end_entity(&mut ring, None).unwrap();
+        drain(&mut ring, &mut sink);
+        assert_eq!(
+            &sink[header_len..header_len + data.len()],
+            &data[..],
+            "capacity {capacity}"
+        );
+        if capacity < 3000 {
+            assert!(calls > 1, "a small ring takes it in pieces");
+        }
+    }
+}
+
+#[test]
+fn a_raw_body_with_a_nul_or_the_boundary_is_refused_and_takes_nothing() {
+    let mut ring = LoopBuf::with_capacity(4096);
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
+    w.end_headers(&mut ring).unwrap();
+    let before = ring.len();
+    let err = w.raw_body_content(&mut ring, b"ab\0cd").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    assert_eq!(ring.len(), before);
+    // and a raw body cannot mix with an encoder
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
+    w.content_transfer_encoding(&mut ring, "base64").unwrap();
+    w.end_headers(&mut ring).unwrap();
+    assert_eq!(
+        w.raw_body_content(&mut ring, b"x").unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+}
+
+#[test]
+fn the_message_writer_gives_the_same_message_through_any_ring() {
+    use rmimeparser::{EmailAddress, MessageWriter, OffsetDateTime};
+
+    fn write(ring: &mut LoopBuf) -> Vec<u8> {
+        let mut sink = Vec::new();
+        let mut w = MessageWriter::new();
+        macro_rules! put {
+            ($e:expr) => {
+                call(ring, &mut sink, |r| $e(&mut w, r))
+            };
+        }
+        put!(|w: &mut MessageWriter, r| w.start_entity(r, None));
+        put!(|w: &mut MessageWriter, r| w.header(r, "Subject", "Caf\u{e9} r\u{e9}sum\u{e9}"));
+        put!(|w: &mut MessageWriter, r| w.date_header(
+            r,
+            "Date",
+            OffsetDateTime::new(2024, 6, 15, 12, 30, 0, 0)
+        ));
+        put!(|w: &mut MessageWriter, r| w.address_header(
+            r,
+            "To",
+            &[
+                EmailAddress::new(Some("Jos\u{e9}".into()), "jose", "example.com", false),
+                EmailAddress::new(None, "bob", "example.org", false),
+            ]
+        ));
+        put!(|w: &mut MessageWriter, r| w.content_type(r, &ContentType::new("text", "plain", None)));
+        put!(|w: &mut MessageWriter, r| w.content_transfer_encoding(r, "quoted-printable"));
+        put!(|w: &mut MessageWriter, r| w.end_headers(r));
+        let text = "Hello caf\u{e9}, line one\nline two\n".repeat(30);
+        let mut rest = text.as_bytes();
+        while !rest.is_empty() {
+            let n = call(ring, &mut sink, |r| w.body_content(r, rest));
+            rest = &rest[n..];
+        }
+        put!(|w: &mut MessageWriter, r| w.end_entity(r, None));
+        w.close().unwrap();
+        assert_eq!(w.bytes_written() as usize, sink.len() + ring.len());
+        drain(ring, &mut sink);
+        sink
+    }
+    let expected = write(&mut LoopBuf::with_capacity(1 << 20));
+    assert!(expected.len() > 500);
+    for capacity in [200usize, 300, 1000] {
+        assert_eq!(
+            write(&mut LoopBuf::with_capacity(capacity)),
+            expected,
+            "capacity {capacity}"
+        );
+    }
+}

@@ -297,20 +297,24 @@ fn convert_obsolete_timezones(input: &str) -> String {
     out
 }
 
+/// `input` with each whole-word `word` replaced. `word` is ASCII. `i` is always
+/// on a character boundary: it moves by a whole character, or by a match of
+/// `word`, which is ASCII and so ends on one.
 fn replace_word(input: &str, word: &str, replacement: &str) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(input.len());
     let mut i = 0;
     let bytes = input.as_bytes();
-    while i < bytes.len() {
-        if input[i..].starts_with(word)
+    while i < input.len() {
+        let rest = &input[i..];
+        if rest.starts_with(word)
             && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
             && (i + word.len() == bytes.len() || !bytes[i + word.len()].is_ascii_alphanumeric())
         {
             out.push_str(replacement);
             i += word.len();
-        } else {
-            out.push(bytes[i] as char);
-            i += 1;
+        } else if let Some(c) = rest.chars().next() {
+            out.push(c);
+            i += c.len_utf8();
         }
     }
     out
