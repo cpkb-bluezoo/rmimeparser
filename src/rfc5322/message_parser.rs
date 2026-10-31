@@ -8,6 +8,7 @@ use loopbuf::LoopBuf;
 use crate::mime::content_types::{ContentId, MimeVersion};
 use crate::mime::error::ParseResult;
 use crate::mime::handler::{HeaderDelivery, Locator, MimeHandler};
+use crate::rfc5322::stream::HeaderStream;
 use crate::mime::limits::ParserLimits;
 use crate::mime::parser::MimeParser;
 use crate::rfc5322::headers;
@@ -16,36 +17,18 @@ use crate::rfc5322::message_handler::MessageHandler;
 #[derive(Debug, Default, Clone)]
 pub(crate) struct MessageHeaderState {
     pub smtp_utf8: bool,
-    pub used_obsolete_syntax: bool,
 }
 
-/// The raw header being collected: this layer parses its value when it is whole.
-struct RawHeader {
-    kind: headers::RawKind,
-    name: String,
-    value: Vec<u8>,
-}
-
-/// Rewrites `buffer` as `name`, keeping its allocation.
-fn copy_into(mut buffer: String, name: &str) -> String {
-    buffer.clear();
-    buffer.push_str(name);
-    buffer
-}
-
-/// Bridges [`MessageHandler`] to [`MimeHandler`] and dispatches RFC 5322 headers.
+/// Bridges [`MessageHandler`] to [`MimeHandler`] and reads the RFC 5322 headers.
 pub(crate) struct MessageBridge<H: MessageHandler> {
     pub(crate) inner: H,
     pub(crate) state: MessageHeaderState,
-    strip_header_whitespace: bool,
     /// Set by `header_delivery` for a header this layer takes, until the
     /// `start_header` that follows it.
     claimed: Option<headers::RawKind>,
-    /// The header being collected, if it is one this layer parses.
-    raw: Option<RawHeader>,
-    /// Kept between headers for their allocations.
-    spare: Vec<u8>,
-    spare_name: String,
+    /// Reads the headers this layer takes.
+    stream: HeaderStream,
+    max_element: usize,
 }
 
 impl<H: MessageHandler> MessageBridge<H> {
@@ -53,21 +36,17 @@ impl<H: MessageHandler> MessageBridge<H> {
         Self {
             inner: handler,
             state: MessageHeaderState::default(),
-            strip_header_whitespace: true,
             claimed: None,
-            raw: None,
-            spare: Vec::new(),
-            spare_name: String::new(),
+            stream: HeaderStream::new(),
+            max_element: usize::MAX,
         }
     }
-}
 
-impl<H: MessageHandler> MessageBridge<H> {
     /// Readies the bridge for another message.
     pub(crate) fn reset(&mut self) {
         self.state = MessageHeaderState::default();
         self.claimed = None;
-        self.raw = None;
+        self.stream = HeaderStream::new();
     }
 }
 
@@ -85,15 +64,20 @@ impl<H: MessageHandler> MimeHandler for MessageBridge<H> {
         }
     }
 
+    fn set_limits(&mut self, limits: &ParserLimits) {
+        self.max_element = limits.max_element_length.unwrap_or(usize::MAX);
+        self.inner.set_limits(limits)
+    }
+
     fn start_header(&mut self, name: &str) -> ParseResult<()> {
         match self.claimed.take() {
-            Some(kind) => {
-                let mut value = std::mem::take(&mut self.spare);
-                value.clear();
-                let name = copy_into(std::mem::take(&mut self.spare_name), name);
-                self.raw = Some(RawHeader { kind, name, value });
-                Ok(())
-            }
+            Some(kind) => self.stream.start(
+                &mut self.inner,
+                kind,
+                name,
+                self.state.smtp_utf8,
+                self.max_element,
+            ),
             None => self.inner.start_header(name),
         }
     }
@@ -103,30 +87,19 @@ impl<H: MessageHandler> MimeHandler for MessageBridge<H> {
     }
 
     fn raw_header_content(&mut self, bytes: &[u8]) -> ParseResult<()> {
-        match self.raw.as_mut() {
-            Some(raw) => {
-                raw.value.extend_from_slice(bytes);
-                Ok(())
-            }
-            None => self.inner.raw_header_content(bytes),
+        if self.stream.active() {
+            self.stream.feed(&mut self.inner, bytes)
+        } else {
+            self.inner.raw_header_content(bytes)
         }
     }
 
     fn end_header(&mut self) -> ParseResult<()> {
-        let Some(raw) = self.raw.take() else {
-            return self.inner.end_header();
-        };
-        let result = headers::dispatch_raw(
-            raw.kind,
-            self.strip_header_whitespace,
-            &mut self.state,
-            &mut self.inner,
-            &raw.name,
-            &raw.value,
-        );
-        self.spare = raw.value;
-        self.spare_name = raw.name;
-        result
+        if self.stream.active() {
+            self.stream.finish(&mut self.inner)
+        } else {
+            self.inner.end_header()
+        }
     }
 
     fn start_entity(&mut self, boundary: Option<&str>) -> ParseResult<()> {

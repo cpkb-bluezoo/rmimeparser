@@ -160,3 +160,36 @@ pub fn decode_token_header_value(data: &mut &[u8], strip_header_whitespace: bool
         out
     }
 }
+
+/// Removes RFC 5322 comments (CFWS, section 3.2.2) from `input`, each becoming a
+/// single space. Comments nest and may contain quoted-pairs. An unterminated
+/// comment is an error.
+pub(crate) fn strip_comments(input: &str) -> Result<std::borrow::Cow<'_, str>, ()> {
+    if !input.contains('(') {
+        return Ok(std::borrow::Cow::Borrowed(input));
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut depth = 0usize;
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '(' => {
+                if depth == 0 {
+                    out.push(' ');
+                }
+                depth += 1;
+            }
+            ')' if depth > 0 => depth -= 1,
+            '\\' if depth > 0 => {
+                chars.next();
+            }
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    if depth == 0 {
+        Ok(std::borrow::Cow::Owned(out))
+    } else {
+        Err(())
+    }
+}

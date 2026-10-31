@@ -539,20 +539,31 @@ parser.close(&amp;mut ring)?;</code></pre>
               <td>Every other header, unknown ones included, as unstructured text (these are <code>MimeHandler</code> events): <code>Subject</code>, <code>Comments</code>, <code>Received</code>, <code>X-…</code>, …</td>
             </tr>
             <tr>
-              <td class="callback">address_header</td>
-              <td><code>From</code>, <code>To</code>, <code>Cc</code>, <code>Reply-To</code>, …</td>
+              <td class="callback">start_address_header / mailbox / start_group / end_group / end_address_header</td>
+              <td>
+                <code>From</code>, <code>To</code>, <code>Cc</code>, <code>Reply-To</code>, &hellip;: one
+                <code>mailbox(display_name, local, domain)</code> per address, as it is read; nothing
+                but one address is held, so a list of any length streams. Groups are groups.
+              </td>
+            </tr>
+            <tr>
+              <td class="callback">start_message_id_header / message_id / end_message_id_header</td>
+              <td><code>Message-ID</code>, <code>In-Reply-To</code>, <code>References</code>, &hellip;: an id at a time.</td>
             </tr>
             <tr>
               <td class="callback">date_header</td>
-              <td><code>Date</code>, <code>Resent-Date</code>, …</td>
+              <td><code>Date</code>, <code>Resent-Date</code>, &hellip;</td>
             </tr>
             <tr>
-              <td class="callback">message_id_header</td>
-              <td><code>Message-ID</code>, <code>In-Reply-To</code>, <code>References</code>, …</td>
+              <td class="callback">obsolete_structure</td>
+              <td>Once for a header, before the first event an obsolete syntax affected.</td>
             </tr>
             <tr>
-              <td class="callback">unexpected_header</td>
-              <td>Malformed values that could not be typed.</td>
+              <td class="callback">malformed_header</td>
+              <td>
+                An element could not be read (a <code>MimeHandler</code> event). What came before has been
+                delivered; the rest of the header, from that element, follows as unstructured text.
+              </td>
             </tr>
           </tbody>
         </table>
@@ -731,7 +742,7 @@ w.close()?;</code></pre>
           <li>
             Limits are one struct, <code>ParserLimits</code> (<code>None</code> is no limit), set with
             <code>with_limits</code>, <code>limits_mut</code> or <code>set_limits</code>:
-            <code>max_header_value_size</code> (default 32&nbsp;KiB) and <code>max_header_line_length</code>
+            <code>max_element_length</code> (default 4&nbsp;KiB: what is held to judge, an address at a time) and <code>max_header_line_length</code>
             (default 998 octets). <code>set_chunk_size</code> bounds the body bytes handed to the handler
             at a time and <code>set_buffer_size</code> sizes the ring <code>parse(reader)</code> allocates.
           </li>

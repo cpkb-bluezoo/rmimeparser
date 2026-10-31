@@ -239,3 +239,9 @@ fn is_valid_domain_part(domain_part: &str) -> bool {
 fn _envelope_fallback(s: &str) -> Option<EmailAddress> {
     EmailAddressParser::parse_envelope_address(s)
 }
+
+/// A message-id in an obsolete form: with or without angle brackets, comments
+/// allowed.
+pub(crate) fn parse_obsolete_message_id_text(text: &str) -> Option<ContentId> {
+    parse_obsolete_message_id(text)
+}

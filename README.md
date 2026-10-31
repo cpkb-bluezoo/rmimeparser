@@ -107,7 +107,26 @@ The two layers are separate. `MimeParser` and `MimeHandler` know nothing of RFC 
 
 `MimeParser` parses five headers itself: `Content-Type`, `Content-Disposition`, `Content-Transfer-Encoding`, `Content-ID` and `MIME-Version`. **Every other header is unstructured**, known or not, and arrives as `start_header(name)`, any number of `header_content(&str)` pieces and `end_header()`. The pieces are unfolded, trimmed, RFC 2047 encoded words decoded, and raw 8-bit text read as UTF-8 where it is valid and as windows-1252 where it is not (ISO-8859-1 with `set_utf8_headers(true)`). The parser holds none of the value, so a header of any size passes through; a bounded amount (an encoded word, some white space, a UTF-8 sequence) is held across pieces, and a piece has no particular size. `HeaderTextDecoder` is the same decoder on its own.
 
-A layer that parses some headers itself says so with `MimeHandler::header_delivery(name)`, asked once for each header the parser does not understand. Answering `HeaderDelivery::Raw` has the value arrive as `raw_header_content(&[u8])` instead: undecoded, with only the folds removed. That is how `MessageParser` takes dates, address lists and message-ids, which it has to read as tokens: decoding an encoded word first could put a `<` or a `,` into the structure. A header taken raw is held by whoever takes it, so `ParserLimits::max_header_value_size` applies to it, as it does to the three of those five that the parser holds whole (`Content-Transfer-Encoding`, `Content-ID`, `MIME-Version`); it does not apply to unstructured headers, `Content-Type` or `Content-Disposition`. The header name has to arrive whole and is limited to `max_header_name_length` (1024).
+A layer that parses some headers itself says so with `MimeHandler::header_delivery(name)`, asked once for each header the parser does not understand. Answering `HeaderDelivery::Raw` has the value arrive as `raw_header_content(&[u8])` instead: undecoded, with only the folds removed. That is how `MessageParser` takes dates, address lists and message-ids, which it has to read as tokens: decoding an encoded word first could put a `<` or a `,` into the structure. A header taken raw is held by whoever takes it, who bounds it: the parser does not. `ParserLimits::max_element_length` applies to what the parser itself holds to judge (`Content-Transfer-Encoding`, `Content-ID`, `MIME-Version`), not to unstructured headers, `Content-Type` or `Content-Disposition`. The header name has to arrive whole and is limited to `max_header_name_length` (1024).
+
+### Addresses, message-ids and dates
+
+`MessageParser` reads these by *elements*, so a header with many of them is never held: a `To` with a thousand addresses is a thousand events and one address in memory.
+
+```text
+start_address_header(name)            start_message_id_header(name)
+  mailbox(display_name, local, domain)  message_id(local, domain)
+  start_group(name)                   end_message_id_header()
+    mailbox(...)*                     date_header(name, OffsetDateTime)
+  end_group()
+end_address_header()
+```
+
+The elements are cut out of the raw bytes by their quotes, comments and angle brackets before anything is decoded, so a decoded RFC 2047 word can never change the structure. Each element is held while it is read, up to `ParserLimits::max_element_length` (default 4096), and judged: the strict RFC 5322 grammar first, then the obsolete syntaxes (a source route, a display name with dots, an empty list element). A display name arrives decoded, with its quotes, comments and encoded words resolved. Groups are groups, `undisclosed-recipients:;` included.
+
+`obsolete_structure` is reported once for a header, before the first event it affects. If an element cannot be read, `malformed_header(name, reason)` is delivered and the rest of the header, from that element on, follows as unstructured text; it ends any group and the header, so no `end_` event follows. What was read before the bad element has already been delivered, so a handler can rebuild the value: its own rendering of what it was given, plus the text.
+
+`AddressListCollector` and `MessageIdListCollector` rebuild the lists as `Vec<Address>` and `Vec<ContentId>` for a handler that wants them. `Content-Transfer-Encoding`, `Content-ID` and `MIME-Version` are held (they are short) and report the same way: an invalid value is a `malformed_header` and its text, not silence.
 
 ### Content-Type and Content-Disposition
 
@@ -142,7 +161,7 @@ The ring belongs to the caller and the parser never grows it. A header line is u
 
 `close(&mut ring)` parses what the ring still holds first, so a final line without its terminator is delivered as a header, as body content or as the closing boundary, which files and IMAP literals often need. It fails if a multipart body is left unclosed. After closing, `receive` returns an error until `reset()`.
 
-A header's value is joined from its folded lines and held until the last has arrived, up to `ParserLimits::max_header_value_size` (default 32768). The limits are one struct, `ParserLimits`, whose fields are `None` for no limit; set them with `with_limits`, `limits_mut` or `set_limits`.
+The limits are one struct, `ParserLimits`, whose fields are `None` for no limit; set them with `with_limits`, `limits_mut` or `set_limits`.
 
 `MimeHandler::set_locator` hands the handler an `Rc<dyn Locator>` that stays live: keep it and read the offset, line and column from inside any later callback. A parser and its handler are used from one thread, so none of this is `Send` or `Sync`.
 

@@ -78,49 +78,16 @@ impl MessageDateTimeFormatter {
     }
 
     pub fn parse(date_string: &str) -> Result<OffsetDateTime, ()> {
-        let stripped = strip_comments(date_string)?;
+        let stripped = crate::mime::utils::strip_comments(date_string)?;
         parse_date_time(stripped.trim(), false)
     }
 
     pub fn parse_obsolete(date_string: &str) -> Option<OffsetDateTime> {
-        let stripped = strip_comments(date_string).ok()?;
+        let stripped = crate::mime::utils::strip_comments(date_string).ok()?;
         let mut s = stripped.trim().to_string();
         s = convert_two_digit_year(&s);
         s = convert_obsolete_timezones(&s);
         parse_date_time(&s, true).ok()
-    }
-}
-
-/// Replaces each RFC 5322 comment (CFWS, §3.2.2) with a single space.
-/// Comments nest and may contain quoted-pairs; an unterminated comment is
-/// an error.
-fn strip_comments(input: &str) -> Result<std::borrow::Cow<'_, str>, ()> {
-    if !input.contains('(') {
-        return Ok(std::borrow::Cow::Borrowed(input));
-    }
-    let mut out = String::with_capacity(input.len());
-    let mut depth = 0usize;
-    let mut chars = input.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '(' => {
-                if depth == 0 {
-                    out.push(' ');
-                }
-                depth += 1;
-            }
-            ')' if depth > 0 => depth -= 1,
-            '\\' if depth > 0 => {
-                chars.next();
-            }
-            _ if depth == 0 => out.push(c),
-            _ => {}
-        }
-    }
-    if depth == 0 {
-        Ok(std::borrow::Cow::Owned(out))
-    } else {
-        Err(())
     }
 }
 
@@ -172,6 +139,11 @@ fn parse_date_time(input: &str, obsolete: bool) -> Result<OffsetDateTime, ()> {
     };
     skip_ws(bytes, &mut pos);
     if pos != bytes.len() {
+        return Err(());
+    }
+    // a leap second is allowed, and the day of the month is not checked
+    // against the month
+    if !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
         return Err(());
     }
     Ok(OffsetDateTime::new(

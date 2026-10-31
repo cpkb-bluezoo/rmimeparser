@@ -354,6 +354,9 @@ pub(crate) enum ByteCharset {
     Utf8,
     Windows1252,
     Latin1,
+    /// Raw 8-bit header text: UTF-8 where it is valid, windows-1252 where it
+    /// is not.
+    Utf8OrWindows1252,
     /// Any other charset: UTF-8 where it is valid, ISO-8859-1 where it is not,
     /// as [`decode_bytes_named`] does for the charsets it does not know.
     Utf8OrLatin1,
@@ -396,7 +399,7 @@ impl ByteDecoder {
             ByteCharset::Windows1252 => {
                 out.extend(bytes.iter().map(|&b| WINDOWS_1252[b as usize]))
             }
-            ByteCharset::Utf8 | ByteCharset::Utf8OrLatin1 => {
+            ByteCharset::Utf8 | ByteCharset::Utf8OrLatin1 | ByteCharset::Utf8OrWindows1252 => {
                 for &b in bytes {
                     self.utf8_byte(b, out);
                 }
@@ -454,6 +457,7 @@ impl ByteDecoder {
     fn invalid(&self, b: u8, out: &mut String) {
         out.push(match self.charset {
             ByteCharset::Utf8 => '\u{FFFD}',
+            ByteCharset::Utf8OrWindows1252 => WINDOWS_1252[b as usize],
             _ => b as char,
         });
     }
@@ -466,4 +470,24 @@ impl ByteDecoder {
             self.invalid(b, out);
         }
     }
+}
+
+/// The text of a header element read whole: raw 8-bit bytes are UTF-8 where they
+/// are valid and otherwise windows-1252, or ISO-8859-1 with `utf8_headers`.
+/// ASCII, which is nearly all of it, is borrowed.
+pub(crate) fn decode_header_element(bytes: &[u8], utf8_headers: bool) -> std::borrow::Cow<'_, str> {
+    if bytes.is_ascii() {
+        if let Ok(s) = std::str::from_utf8(bytes) {
+            return std::borrow::Cow::Borrowed(s);
+        }
+    }
+    let mut out = String::with_capacity(bytes.len() + 8);
+    let mut decoder = ByteDecoder::new(if utf8_headers {
+        ByteCharset::Utf8OrLatin1
+    } else {
+        ByteCharset::Utf8OrWindows1252
+    });
+    decoder.feed(bytes, &mut out);
+    decoder.finish(&mut out);
+    std::borrow::Cow::Owned(out)
 }

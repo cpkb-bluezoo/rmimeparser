@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use loopbuf::LoopBuf;
 use rmimeparser::{
-    ContentId, ContentType, ContentTypeCollector, EmailAddress, Locator, MessageHandler, MessageParser, MimeHandler,
+    Address, AddressListCollector, ContentId, ContentType, ContentTypeCollector, MessageIdListCollector, EmailAddress, Locator, MessageHandler, MessageParser, MimeHandler,
     MimeVersion, OffsetDateTime, ParseResult,
 };
 
@@ -15,6 +15,10 @@ struct TestMessageHandler {
     unstructured_headers: HashMap<String, String>,
     unexpected_headers: HashMap<String, String>,
     current_header: (String, String),
+    malformed: bool,
+    structured_name: String,
+    addresses: AddressListCollector,
+    ids: MessageIdListCollector,
     content_type_collector: ContentTypeCollector,
     content_type: Option<ContentType>,
     mime_version: Option<MimeVersion>,
@@ -31,6 +35,10 @@ impl TestMessageHandler {
             unstructured_headers: HashMap::new(),
             unexpected_headers: HashMap::new(),
             current_header: Default::default(),
+            malformed: false,
+            structured_name: String::new(),
+            addresses: Default::default(),
+            ids: Default::default(),
             content_type_collector: Default::default(),
             content_type: None,
             mime_version: None,
@@ -60,6 +68,12 @@ impl MimeHandler for TestMessageHandler {
         Ok(())
     }
 
+    fn malformed_header(&mut self, name: &str, _reason: &str) -> ParseResult<()> {
+        self.current_header = (name.to_string(), String::new());
+        self.malformed = true;
+        Ok(())
+    }
+
     fn header_content(&mut self, text: &str) -> ParseResult<()> {
         self.current_header.1.push_str(text);
         Ok(())
@@ -67,7 +81,11 @@ impl MimeHandler for TestMessageHandler {
 
     fn end_header(&mut self) -> ParseResult<()> {
         let (name, value) = std::mem::take(&mut self.current_header);
-        self.unstructured_headers.insert(name, value);
+        if std::mem::take(&mut self.malformed) {
+            self.unexpected_headers.insert(name, value);
+        } else {
+            self.unstructured_headers.insert(name, value);
+        }
         Ok(())
     }
 
@@ -117,26 +135,61 @@ impl MimeHandler for TestMessageHandler {
 }
 
 impl MessageHandler for TestMessageHandler {
-    fn unexpected_header(&mut self, name: &str, value: &str) -> ParseResult<()> {
-        self.unexpected_headers
-            .insert(name.to_string(), value.to_string());
-        Ok(())
-    }
 
     fn date_header(&mut self, name: &str, date: OffsetDateTime) -> ParseResult<()> {
         self.date_headers.insert(name.to_string(), date);
         Ok(())
     }
 
-    fn address_header(&mut self, name: &str, addresses: &[EmailAddress]) -> ParseResult<()> {
-        self.address_headers
-            .insert(name.to_string(), addresses.to_vec());
+    fn start_address_header(&mut self, name: &str) -> ParseResult<()> {
+        self.structured_name = name.to_string();
+        self.addresses.clear();
         Ok(())
     }
 
-    fn message_id_header(&mut self, name: &str, content_ids: &[ContentId]) -> ParseResult<()> {
+    fn mailbox(&mut self, display: Option<&str>, local: &str, domain: &str) -> ParseResult<()> {
+        self.addresses.mailbox(display, local, domain);
+        Ok(())
+    }
+
+    fn start_group(&mut self, name: &str) -> ParseResult<()> {
+        self.addresses.start_group(name);
+        Ok(())
+    }
+
+    fn end_group(&mut self) -> ParseResult<()> {
+        self.addresses.end_group();
+        Ok(())
+    }
+
+    fn end_address_header(&mut self) -> ParseResult<()> {
+        // groups are flattened into their members
+        let mut flat = Vec::new();
+        for address in self.addresses.take() {
+            match address {
+                Address::Mailbox(m) => flat.push(m),
+                Address::Group(g) => flat.extend(g.members().iter().cloned()),
+            }
+        }
+        self.address_headers
+            .insert(std::mem::take(&mut self.structured_name), flat);
+        Ok(())
+    }
+
+    fn start_message_id_header(&mut self, name: &str) -> ParseResult<()> {
+        self.structured_name = name.to_string();
+        self.ids.clear();
+        Ok(())
+    }
+
+    fn message_id(&mut self, local: &str, domain: &str) -> ParseResult<()> {
+        self.ids.message_id(local, domain);
+        Ok(())
+    }
+
+    fn end_message_id_header(&mut self) -> ParseResult<()> {
         self.message_id_headers
-            .insert(name.to_string(), content_ids.to_vec());
+            .insert(std::mem::take(&mut self.structured_name), self.ids.take());
         Ok(())
     }
 }

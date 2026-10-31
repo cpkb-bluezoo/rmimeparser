@@ -366,7 +366,7 @@ fn test_header_line_too_long() {
 fn test_header_value_too_long() {
     let mut handler = TestHandler::new();
     let mut parser = MimeParser::new(&mut handler);
-    parser.limits_mut().max_header_value_size = Some(50);
+    parser.limits_mut().max_element_length = Some(50);
 
     // Content-Transfer-Encoding is one of the headers the parser holds whole to parse
     let mut sb = String::from("Content-Transfer-Encoding: ");
@@ -383,7 +383,7 @@ fn test_header_value_too_long() {
 fn test_unstructured_header_is_streamed_not_held_so_the_value_limit_does_not_apply() {
     let mut handler = TestHandler::new();
     let mut parser = MimeParser::new(&mut handler);
-    parser.limits_mut().max_header_value_size = Some(50);
+    parser.limits_mut().max_element_length = Some(50);
     // Far past the limit, in many folded lines
     let mut sb = String::from("X-Long: start\r\n");
     for _ in 0..200 {
@@ -849,15 +849,15 @@ fn test_a_header_asked_for_raw_arrives_undecoded_and_unfolded() {
 }
 
 #[test]
-fn test_the_value_limit_applies_to_a_header_taken_raw() {
+fn test_a_header_taken_raw_is_not_limited_by_the_parser_whoever_takes_it_bounds_it() {
     let mut taker = RawTaker { raw: Vec::new(), unstructured: Vec::new() };
     let mut parser = MimeParser::new(&mut taker);
-    parser.limits_mut().max_header_value_size = Some(20);
+    parser.limits_mut().max_element_length = Some(20);
     let msg = format!("X-Raw: {}\r\n\r\n", "a".repeat(40));
     let mut ring = LoopBuf::with_capacity(msg.len() + 64);
     ring.extend_from_slice(msg.as_bytes());
-    let err = parser.receive(&mut ring).unwrap_err();
-    assert!(err.message().contains("maximum"), "{err}");
+    parser.receive(&mut ring).unwrap();
+    assert_eq!(taker.raw[0].1.len(), 41);
 }
 
 // ---- Content-Type and Content-Disposition stream ----
@@ -880,7 +880,7 @@ fn parse_chunked(msg: &str, step: usize) -> TestHandler {
 fn test_a_huge_parameter_value_is_streamed_not_held() {
     let mut handler = TestHandler::new();
     let mut parser = MimeParser::new(&mut handler);
-    parser.limits_mut().max_header_value_size = Some(50);
+    parser.limits_mut().max_element_length = Some(50);
     let mut msg = String::from("Content-Disposition: attachment; filename=\"");
     for _ in 0..300 {
         msg.push_str("a long file name part\r\n ");

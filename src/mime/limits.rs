@@ -15,12 +15,15 @@ pub struct ParserLimits {
     /// holds to judge: the type, subtype and disposition type, parameter names,
     /// and the charset and language of an extended value. Default: 256.
     pub max_token_length: Option<usize>,
-    /// The longest value, once its folded lines are joined, of a header the
-    /// parser holds whole to parse: the MIME headers it understands, and any
-    /// header a layer on top asks to be given raw because it holds the value
-    /// itself. A header delivered as unstructured text is never held, so this
-    /// does not apply to it. Default: 32768.
-    pub max_header_value_size: Option<usize>,
+    /// The longest element a parser holds to judge whole: the value of
+    /// `Content-Transfer-Encoding`, `Content-ID` and `MIME-Version`, and, in the
+    /// RFC 5322 layer, one address, one message-id or a date. A header with many
+    /// elements (a long `To` or `References`) is not held: it passes through an
+    /// element at a time. Default: 4096.
+    pub max_element_length: Option<usize>,
+    /// The most a raw-capturing parser ([`crate::DkimMessageParser`]) keeps of
+    /// one header, which it retains whole by design. Default: 32768.
+    pub max_captured_header_size: Option<usize>,
 }
 
 impl Default for ParserLimits {
@@ -29,7 +32,8 @@ impl Default for ParserLimits {
             max_header_line_length: Some(998),
             max_header_name_length: Some(1024),
             max_token_length: Some(256),
-            max_header_value_size: Some(32 * 1024),
+            max_element_length: Some(4096),
+            max_captured_header_size: Some(32 * 1024),
         }
     }
 }
@@ -41,7 +45,8 @@ impl ParserLimits {
             max_header_line_length: None,
             max_header_name_length: None,
             max_token_length: None,
-            max_header_value_size: None,
+            max_element_length: None,
+            max_captured_header_size: None,
         }
     }
 }

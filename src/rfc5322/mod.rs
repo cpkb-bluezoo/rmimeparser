@@ -1,8 +1,10 @@
+mod collectors;
 mod email_address;
 mod email_address_parser;
 mod group_email_address;
 mod message_date_time;
 mod message_handler;
+pub(crate) mod stream;
 mod message_writer;
 mod obsolete_parser_utils;
 mod obsolete_structure_type;
@@ -10,6 +12,7 @@ mod obsolete_structure_type;
 pub(crate) mod headers;
 pub(crate) mod message_parser;
 
+pub use collectors::{AddressListCollector, MessageIdListCollector};
 pub use email_address::EmailAddress;
 pub use email_address_parser::EmailAddressParser;
 pub use group_email_address::{Address, GroupEmailAddress};

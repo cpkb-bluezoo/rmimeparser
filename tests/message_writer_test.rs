@@ -8,6 +8,7 @@ use rmimeparser::{
 struct Capture {
     subject: Option<String>,
     header: (String, String),
+    address_header: String,
     from: Vec<EmailAddress>,
     date: Option<OffsetDateTime>,
     body: Vec<u8>,
@@ -38,9 +39,15 @@ impl MimeHandler for Capture {
 }
 
 impl MessageHandler for Capture {
-    fn address_header(&mut self, name: &str, addresses: &[EmailAddress]) -> ParseResult<()> {
-        if name.eq_ignore_ascii_case("from") {
-            self.from = addresses.to_vec();
+    fn start_address_header(&mut self, name: &str) -> ParseResult<()> {
+        self.address_header = name.to_string();
+        Ok(())
+    }
+
+    fn mailbox(&mut self, display: Option<&str>, local: &str, domain: &str) -> ParseResult<()> {
+        if self.address_header.eq_ignore_ascii_case("from") {
+            self.from
+                .push(EmailAddress::new(display.map(str::to_string), local, domain, false));
         }
         Ok(())
     }

@@ -193,3 +193,11 @@ fn skip_comment(value: &mut ByteCursor<'_>) {
         value.set_position(pos + 1);
     }
 }
+
+/// The message-id in `inner`, the text between a msg-id's angle brackets:
+/// `local@domain`.
+pub(crate) fn parse_msg_id_text(inner: &str, smtp_utf8: bool) -> Option<ContentId> {
+    let (local, domain) = inner.split_once('@')?;
+    (is_valid_id_left(local, smtp_utf8) && is_valid_id_right(domain, smtp_utf8))
+        .then(|| ContentId::new(local, domain))
+}

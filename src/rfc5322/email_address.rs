@@ -28,6 +28,11 @@ impl EmailAddress {
         }
     }
 
+    /// The display name, local part and domain, moved out.
+    pub(crate) fn into_parts(self) -> (Option<String>, String, String) {
+        (self.display_name, self.local_part, self.domain)
+    }
+
     pub fn with_comments(
         display_name: Option<String>,
         local_part: impl Into<String>,

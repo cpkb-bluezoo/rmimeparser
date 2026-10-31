@@ -780,3 +780,251 @@ fn parse_domain_range(value: &ByteCursor<'_>) -> Option<(usize, usize)> {
     }
     Some((start, pos))
 }
+
+
+/// Buffers the element parsers reuse from one element to the next.
+#[derive(Default)]
+pub(crate) struct MailboxScratch {
+    chars: Vec<char>,
+    token: String,
+}
+
+/// A mailbox read from one element of an address list.
+pub(crate) struct Mailbox {
+    pub(crate) display_name: Option<String>,
+    pub(crate) local_part: String,
+    pub(crate) domain: String,
+    /// Written in obsolete syntax.
+    pub(crate) obsolete: bool,
+}
+
+/// Reads one mailbox from `text`, the text of one element of an address list:
+/// `[display-name] <local@domain>` or `local@domain`, with comments allowed.
+/// Falls back to the obsolete syntaxes (a source route, a display name with
+/// dots). The local part and domain have to be valid whichever way it is read.
+/// `None` if it is not a mailbox.
+pub(crate) fn parse_mailbox_element(
+    text: &str,
+    smtp_utf8: bool,
+    scratch: &mut MailboxScratch,
+) -> Option<Mailbox> {
+    let text = text.trim();
+    parse_mailbox_fast(text, smtp_utf8)
+        .or_else(|| parse_mailbox_general(text, smtp_utf8, scratch))
+}
+
+/// The two shapes nearly every address has, read directly: `local@domain` and
+/// `Plain Name <local@domain>`, in plain ASCII with no quotes or comments. It
+/// accepts only what the general parser would accept with the same result,
+/// and returns `None`, not an error, for anything else; the general parser
+/// then decides.
+fn parse_mailbox_fast(text: &str, smtp_utf8: bool) -> Option<Mailbox> {
+    let bytes = text.as_bytes();
+    let plain = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'/' | b'=' | b'?' | b'^' | b'_' | b'`' | b'{' | b'|' | b'}' | b'~');
+    // The address itself: plain characters and dots, one at sign
+    let address = |s: &str| -> Option<(String, String)> {
+        let (local, domain) = s.split_once('@')?;
+        if !s.bytes().all(|b| plain(b) || b == b'.' || b == b'@')
+            || !valid_parts(local, domain, smtp_utf8)
+        {
+            return None;
+        }
+        Some((local.to_string(), domain.to_string()))
+    };
+    if bytes.is_empty() || !bytes.is_ascii() {
+        return None;
+    }
+    let (display_name, local_part, domain) = match bytes.iter().position(|&b| b == b'<') {
+        None => {
+            let (local, domain) = address(text)?;
+            (None, local, domain)
+        }
+        Some(open) => {
+            if bytes[bytes.len() - 1] != b'>' {
+                return None;
+            }
+            let (local, domain) = address(&text[open + 1..text.len() - 1])?;
+            let name = &text[..open];
+            // a phrase: plain words, white space between them
+            if !name.bytes().all(|b| plain(b) || b == b' ' || b == b'\t') {
+                return None;
+            }
+            let mut words = name.split_ascii_whitespace();
+            let display = match words.next() {
+                None => None,
+                Some(first) => {
+                    let mut joined = String::with_capacity(name.len());
+                    joined.push_str(first);
+                    for word in words {
+                        joined.push(' ');
+                        joined.push_str(word);
+                    }
+                    Some(Rfc2047Decoder::decode_encoded_words_owned(joined))
+                }
+            };
+            (display, local, domain)
+        }
+    };
+    Some(Mailbox {
+        display_name,
+        local_part,
+        domain,
+        obsolete: false,
+    })
+}
+
+fn parse_mailbox_general(
+    text: &str,
+    smtp_utf8: bool,
+    scratch: &mut MailboxScratch,
+) -> Option<Mailbox> {
+    if text.is_empty() {
+        return None;
+    }
+    let MailboxScratch { chars, token } = scratch;
+    chars.clear();
+    chars.extend(text.chars());
+    let len = chars.len();
+    let mut pos = 0usize;
+    if let Some(address) = parse_individual_address(chars, len, &mut pos, token, smtp_utf8) {
+        skip_ws_comments(chars, len, &mut pos);
+        if pos == len && valid_parts(address.local_part(), address.domain(), smtp_utf8) {
+            let (display_name, local_part, domain) = address.into_parts();
+            return Some(Mailbox {
+                display_name: display_name.map(Rfc2047Decoder::decode_encoded_words_owned),
+                local_part,
+                domain,
+                obsolete: false,
+            });
+        }
+    }
+    parse_obsolete_mailbox(text, smtp_utf8)
+}
+
+/// The name of a group, from the text before its colon.
+pub(crate) fn parse_group_name(
+    text: &str,
+    smtp_utf8: bool,
+    scratch: &mut MailboxScratch,
+) -> Option<String> {
+    let MailboxScratch { chars, token } = scratch;
+    chars.clear();
+    chars.extend(text.trim().chars());
+    let len = chars.len();
+    let mut pos = 0usize;
+    let name = parse_display_name(chars, len, &mut pos, token, smtp_utf8)?;
+    skip_ws_comments(chars, len, &mut pos);
+    (pos == len).then(|| Rfc2047Decoder::decode_encoded_words_owned(name))
+}
+
+fn valid_parts(local: &str, domain: &str, smtp_utf8: bool) -> bool {
+    is_valid_local_part(local, smtp_utf8) && is_valid_domain(domain, smtp_utf8)
+}
+
+fn decode_words(name: &str) -> String {
+    Rfc2047Decoder::decode_encoded_words_owned(name.to_string())
+}
+
+/// The obsolete forms: a display name with characters a phrase does not allow
+/// (`John Q. Public <jqp@example.org>`), and a source route
+/// (`<@a.example,@b.example:user@c.example>`).
+fn parse_obsolete_mailbox(text: &str, smtp_utf8: bool) -> Option<Mailbox> {
+    let uncommented = crate::mime::utils::strip_comments(text).ok()?;
+    let text = uncommented.trim();
+    let (display, inner) = match (text.find('<'), text.rfind('>')) {
+        (Some(open), Some(close)) if open < close && text[close + 1..].trim().is_empty() => {
+            (text[..open].trim(), text[open + 1..close].trim())
+        }
+        (None, None) => ("", text),
+        _ => return None,
+    };
+    let inner = match inner.strip_prefix('@') {
+        // a route: skip to the colon that ends it
+        Some(_) => inner[inner.rfind(':')? + 1..].trim(),
+        None => inner,
+    };
+    if inner.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let at = inner.rfind('@')?;
+    let (local, domain) = (&inner[..at], &inner[at + 1..]);
+    if !valid_parts(local, domain, smtp_utf8) {
+        return None;
+    }
+    // a bare address is only obsolete if it is a route
+    if display.is_empty() && !text.starts_with('@') && !text.starts_with('<') {
+        return None;
+    }
+    let display = clean_name(display);
+    Some(Mailbox {
+        display_name: (!display.is_empty()).then(|| decode_words(&display)),
+        local_part: local.to_string(),
+        domain: domain.to_string(),
+        obsolete: true,
+    })
+}
+
+/// A display name without its quotes and quoted-pairs.
+fn clean_name(name: &str) -> String {
+    let name = name.trim();
+    let name = if name.len() >= 2 && name.starts_with('"') && name.ends_with('"') {
+        &name[1..name.len() - 1]
+    } else {
+        name
+    };
+    name.replace("\\\"", "\"").replace("\\\\", "\\").trim().to_string()
+}
+
+#[cfg(test)]
+mod fast_path_tests {
+    use super::*;
+
+    /// A small deterministic generator.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+    }
+
+    /// Wherever the fast path reads an address, the general parser reads the
+    /// same one.
+    #[test]
+    fn the_fast_path_never_disagrees_with_the_general_parser() {
+        let alphabet: Vec<&str> = vec![
+            "a", "B", "7", "x", " ", " ", ".", "@", "@", "<", ">", "-", "_", "+", "\"", "(", ")",
+            ",", ":", ";", "\\", "[", "]", "=?utf-8?q?a?=", "\t", "\u{e9}", "john", "example",
+            ".org", "<a@b.org>", "'",
+        ];
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let mut scratch = MailboxScratch::default();
+        let (mut accepted, mut total) = (0usize, 0usize);
+        for _ in 0..300_000 {
+            let n = 1 + (rng.next() % 9) as usize;
+            let text: String = (0..n)
+                .map(|_| alphabet[(rng.next() % alphabet.len() as u64) as usize])
+                .collect();
+            let text = text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            total += 1;
+            for smtp_utf8 in [false, true] {
+                let Some(fast) = parse_mailbox_fast(text, smtp_utf8) else {
+                    continue;
+                };
+                accepted += 1;
+                let general = parse_mailbox_general(text, smtp_utf8, &mut scratch)
+                    .unwrap_or_else(|| panic!("fast read {text:?}, general did not"));
+                assert_eq!(fast.display_name, general.display_name, "{text:?}");
+                assert_eq!(fast.local_part, general.local_part, "{text:?}");
+                assert_eq!(fast.domain, general.domain, "{text:?}");
+                assert_eq!(fast.obsolete, general.obsolete, "{text:?}");
+            }
+        }
+        assert!(total > 200_000 && accepted > 1_000, "{accepted} of {total}");
+    }
+}

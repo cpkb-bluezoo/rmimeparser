@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use crate::mime::content_types::{ContentId, MimeVersion};
 use crate::mime::error::ParseResult;
+use crate::mime::limits::ParserLimits;
 
 /// Where the parser is in the message.
 ///
@@ -94,6 +95,11 @@ pub trait MimeHandler {
     /// Called once, before the first event, with the parser's locator. It is
     /// live: keep it and read it from inside later callbacks.
     fn set_locator(&mut self, _locator: Rc<dyn Locator>) {}
+
+    /// Called once, before the first event of a message, with the limits the
+    /// parser is working to. A layer that holds elements of its own (the RFC 5322
+    /// layer holds an address at a time) keeps to them.
+    fn set_limits(&mut self, _limits: &ParserLimits) {}
 
     /// Asked once for each header the parser does not itself understand (the
     /// ones it does are `Content-Type`, `Content-Disposition`,
@@ -192,11 +198,16 @@ pub trait MimeHandler {
         Ok(())
     }
 
-    /// A header the parser would have parsed (`Content-Type` or
-    /// `Content-Disposition`) is not valid. It stands in for
-    /// [`Self::start_header`]: the whole value follows as unstructured text,
-    /// through [`Self::header_content`] and then [`Self::end_header`], as if it
-    /// were any other header. `reason` says what is wrong with it.
+    /// The value of a header the parser or a layer on top would have parsed
+    /// (`Content-Type`, `Content-Transfer-Encoding`, an address list, a date...)
+    /// is not valid. `reason` says what is wrong with it.
+    ///
+    /// It stands in for [`Self::start_header`]: the value follows as
+    /// unstructured text, through [`Self::header_content`] and then
+    /// [`Self::end_header`], as if it were any other header. If the header had
+    /// already begun to be delivered in parts (an address list whose first
+    /// addresses were fine), the text is what is left of it from the point of
+    /// failure, and this ends whatever had been begun: no `end_` event follows.
     fn malformed_header(&mut self, _name: &str, _reason: &str) -> ParseResult<()> {
         Ok(())
     }
@@ -235,6 +246,9 @@ macro_rules! forward_handler {
         impl<H: MimeHandler + ?Sized> MimeHandler for $target {
             fn set_locator(&mut self, locator: Rc<dyn Locator>) {
                 (**self).set_locator(locator)
+            }
+            fn set_limits(&mut self, limits: &ParserLimits) {
+                (**self).set_limits(limits)
             }
             fn header_delivery(&mut self, name: &str) -> HeaderDelivery {
                 (**self).header_delivery(name)
