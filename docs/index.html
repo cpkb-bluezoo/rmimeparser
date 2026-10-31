@@ -292,7 +292,8 @@
         </p>
 
         <h3>Minimal example</h3>
-<pre><code>use rmimeparser::{MimeHandler, MimeParser, ParseResult};
+<pre><code>use loopbuf::LoopBuf;
+use rmimeparser::{MimeHandler, MimeParser, ParseResult};
 
 struct CountBody {
     bytes: usize,
@@ -306,12 +307,12 @@ impl MimeHandler for CountBody {
 }
 
 let raw = b"Content-Type: text/plain\r\n\r\nHello\r\n";
-let mut handler = CountBody { bytes: 0 };
-let mut parser = MimeParser::new(&amp;mut handler);
-let mut input = &amp;raw[..];
-parser.receive(&amp;mut input)?;
-parser.close()?;
-assert_eq!(handler.bytes, 7);</code></pre>
+let mut parser = MimeParser::new(CountBody { bytes: 0 });
+let mut ring = LoopBuf::with_capacity(8192);
+ring.extend_from_slice(raw);
+parser.receive(&amp;mut ring)?;
+parser.close(&amp;mut ring)?;
+assert_eq!(parser.handler().bytes, 7);</code></pre>
 
         <h3>Callback order</h3>
         <p>
@@ -382,67 +383,72 @@ end_entity(None)          // from close()</code></pre>
       <section id="feeding">
         <h2>Feeding the parser with bytes</h2>
         <p>
-          Call <code>receive(&amp;mut slice)</code> repeatedly. The parser advances the slice past bytes it
-          has consumed. Header lines are parsed whole, so leftover bytes at the front of the slice are an
-          incomplete header line (underflow)—keep them and append the next read. Body bytes are consumed as
-          they arrive and delivered as zero-copy runs, so a body is never left in the slice and needs no
-          buffering on your side, whatever its line lengths.
+          Call <code>receive(&amp;mut ring)</code> repeatedly with a caller-owned
+          <code>loopbuf::LoopBuf</code>. The parser consumes what it can use and leaves the rest in the
+          ring. Header lines are parsed whole, so what is left in the ring is an incomplete header line
+          (underflow)&mdash;add the next read after it. Body bytes are consumed as they arrive and
+          delivered as zero-copy runs, so a body is never left in the ring and needs no buffering on
+          your side, whatever its line lengths.
         </p>
 
         <h3>Streaming buffer loop</h3>
-<pre><code>use rmimeparser::{MimeHandler, MimeParser, ParseResult};
+<pre><code>use loopbuf::LoopBuf;
+use rmimeparser::{MimeHandler, MimeParser, ParseError, ParseResult};
 
 fn parse_stream&lt;R: std::io::Read, H: MimeHandler&gt;(
-    reader: &amp;mut R,
-    handler: &amp;mut H,
-) -&gt; ParseResult&lt;()&gt; {
+    mut reader: R,
+    handler: H,
+) -&gt; ParseResult&lt;H&gt; {
     let mut parser = MimeParser::new(handler);
-    let mut buf = vec![0u8; 8192];
-    let mut filled = 0usize;
+    let mut ring = LoopBuf::with_capacity(8192);
 
     loop {
-        let n = reader.read(&amp;mut buf[filled..]).map_err(|e| {
-            rmimeparser::MimeParseError::new(e.to_string())
-        })?;
+        let (spare, _) = ring.spare_capacity_mut();
+        let n = reader
+            .read(spare)
+            .map_err(|e| ParseError::new(e.to_string()))?;
         if n == 0 {
             break;
         }
-        filled += n;
-
-        let mut slice = &amp;buf[..filled];
-        parser.receive(&amp;mut slice)?;
-        let remaining = slice.len();
-        // Compact unconsumed bytes to the front of the buffer.
-        buf.copy_within(filled - remaining..filled, 0);
-        filled = remaining;
+        ring.commit_write(n);
+        // What the parser cannot use yet is still in the ring.
+        parser.receive(&amp;mut ring)?;
     }
 
-    parser.close()
-}</code></pre>
+    parser.close(&amp;mut ring)?;
+    Ok(parser.into_handler())
+}
+
+// Or let the parser do exactly that:
+//     MimeParser::new(handler).parse(reader)?;</code></pre>
 
         <ul>
           <li>
             After <code>receive</code>, if <code>parser.is_underflow()</code> is true, more input is needed
             before the current header line, or the current line of a multipart body, is complete (a
             multipart line that might be a boundary, at most about 76 bytes, is the only body data the
-            parser holds back). A header line longer than 998 bytes is rejected as soon as that
-            length is exceeded, without waiting for its terminator.
+            parser holds back). A header line longer than <code>ParserLimits::max_header_line_length</code>
+            (998) is rejected as soon as that length is exceeded, without waiting for its terminator; a
+            ring full of one unfinished line is an error, because it can never fit.
           </li>
           <li>
-            For a non-multipart body, <code>close()</code> may succeed even with trailing underflow
-            (end of stream). For headers or multipart, underflow on <code>close()</code> is an error;
-            use <code>finish(&amp;mut slice)</code> when the input is known to be complete and may end
-            without a final line terminator.
+            <code>close(&amp;mut ring)</code> parses what the ring still holds first, so a final line with no
+            terminator is delivered as a header, as body content or as the closing boundary. It fails if a
+            multipart body is left unclosed.
           </li>
           <li>
-            You can also feed the entire message in one <code>receive</code> if it already sits in memory.
+            You can also feed the entire message in one <code>receive</code> if it already sits in the ring.
+          </li>
+          <li>
+            The parser owns its handler: <code>handler()</code>, <code>handler_mut()</code> and
+            <code>into_handler()</code> get at it, and <code>MimeParser::new(&amp;mut handler)</code> lends one
+            you want to keep.
           </li>
         </ul>
 
         <div class="note warn">
-          Always pass <code>&amp;mut &amp;[u8]</code> (a mutable reference to the slice). The parser rewrites
-          the slice to the unconsumed suffix; forgetting to compact leftovers will drop or
-          duplicate data on the next read.
+          The ring is yours and the parser never grows it. It has to be able to hold the longest header
+          line (998 bytes plus its terminator).
         </div>
       </section>
 
@@ -453,7 +459,8 @@ fn parse_stream&lt;R: std::io::Read, H: MimeHandler&gt;(
           (which extends <code>MimeHandler</code>) to get typed address, date, and Message-ID headers
           in addition to MIME callbacks.
         </p>
-<pre><code>use rmimeparser::{MessageHandler, MessageParser, ParseResult};
+<pre><code>use loopbuf::LoopBuf;
+use rmimeparser::{MessageHandler, MessageParser, ParseResult};
 
 struct CollectSubject {
     subject: Option&lt;String&gt;,
@@ -472,11 +479,11 @@ impl MessageHandler for CollectSubject {
 impl rmimeparser::MimeHandler for CollectSubject {}
 
 let raw = b"Subject: hello\r\n\r\nHi\r\n";
-let mut handler = CollectSubject { subject: None };
-let mut parser = MessageParser::new(&amp;mut handler);
-let mut input = &amp;raw[..];
-parser.receive(&amp;mut input)?;
-parser.close()?;</code></pre>
+let mut parser = MessageParser::new(CollectSubject { subject: None });
+let mut ring = LoopBuf::with_capacity(8192);
+ring.extend_from_slice(raw);
+parser.receive(&amp;mut ring)?;
+parser.close(&amp;mut ring)?;</code></pre>
 
         <table>
           <thead>
@@ -519,19 +526,20 @@ parser.close()?;</code></pre>
           the same typed <code>MessageHandler</code> for decoded events. After
           <code>receive</code> / <code>close</code>, read wire data from the <em>parser</em>:
         </p>
-<pre><code>use rmimeparser::{DkimMessageParser, MessageHandler, MimeHandler, ParseResult};
+<pre><code>use loopbuf::LoopBuf;
+use rmimeparser::{DkimMessageParser, MessageHandler, MimeHandler, ParseResult};
 
 struct App;
 impl MimeHandler for App {}
 impl MessageHandler for App {}
 
-let mut handler = App;
-let mut parser = DkimMessageParser::new(&amp;mut handler);
-let mut input = &amp;raw[..];
-parser.receive(&amp;mut input)?;
-parser.close()?;
+let mut parser = DkimMessageParser::new(App);
+let mut ring = LoopBuf::with_capacity(8192);
+ring.extend_from_slice(raw);
+parser.receive(&amp;mut ring)?;
+parser.close(&amp;mut ring)?;
 
-// Decoded events already went to `handler`.
+// Decoded events already went to the handler.
 // Wire bytes for DKIM:
 let headers = parser.raw_headers();      // &[RawHeader], folds preserved
 let body = parser.raw_body();            // undecoded body lines
@@ -654,12 +662,14 @@ w.close()?;</code></pre>
         <p>The encoders stream too: <code>Base64Encoder</code>, <code>QuotedPrintableEncoder</code> and <code>UuencodeEncoder</code> take <code>write(out, data)</code> in any chunking and <code>finish(out)</code>, holding at most one partial unit; <code>encode_base64</code>, <code>encode_quoted_printable</code> and <code>encode_uuencode(out, filename, mode, data)</code> do a whole buffer in one call. uuencode's <code>begin</code> line is written on the first <code>write</code>, the "`" and <code>end</code> lines by <code>finish</code>. <code>MimeWriter</code> drives the base64 and quoted-printable encoders itself; a uuencode body needs the filename for its <code>begin</code> line, so it is written with <code>raw_body_content</code> from <code>UuencodeEncoder</code> output.</p>
         <h2>Errors and limits</h2>
         <ul>
-          <li>Parse failures use <code>MimeParseError</code> / <code>ParseResult</code> (often with locator position).</li>
+          <li>Parse failures use <code>ParseError</code> / <code>ParseResult</code>; the message says where in the message it was found. A handler callback returns the same <code>ParseResult</code>, and an error from it stops the parse.</li>
           <li>Write failures use <code>MimeWriteError</code> / <code>WriteResult</code> (I/O, invalid state, validation).</li>
           <li>
-            Tunables on the parser include <code>set_max_buffer_size</code> and
-            <code>set_max_header_value_size</code> (default header value cap is 32&nbsp;KiB; physical header
-            lines must not exceed 998 octets).
+            Limits are one struct, <code>ParserLimits</code> (<code>None</code> is no limit), set with
+            <code>with_limits</code>, <code>limits_mut</code> or <code>set_limits</code>:
+            <code>max_header_value_size</code> (default 32&nbsp;KiB) and <code>max_header_line_length</code>
+            (default 998 octets). <code>set_chunk_size</code> bounds the body bytes handed to the handler
+            at a time and <code>set_buffer_size</code> sizes the ring <code>parse(reader)</code> allocates.
           </li>
         </ul>
         <p>

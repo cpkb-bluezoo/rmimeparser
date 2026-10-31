@@ -1,5 +1,10 @@
 //! Push-based MIME entity parser (gumdrop `MIMEParser` port).
 
+use std::io::Read;
+use std::rc::Rc;
+
+use loopbuf::LoopBuf;
+
 use crate::buffer::ByteCursor;
 use crate::charset::HeaderCharset;
 use crate::mime::content_type_parser::{ContentDispositionParser, ContentTypeParser};
@@ -8,21 +13,19 @@ use crate::mime::content_id_parser::ContentIdParser;
 use crate::mime::decoders::{
     decode_base64, decode_quoted_printable, decode_uuencode, is_base64_char,
 };
-use crate::mime::error::{
-    HeaderLineTooLongError, HeaderValueTooLongError, MimeParseError, ParseResult,
-};
-use crate::mime::handler::{MimeHandler, MimeLocator};
+use crate::mime::error::{ParseError, ParseResult};
+use crate::mime::handler::{Locator, MimeHandler, SharedLocator};
+use crate::mime::limits::ParserLimits;
 use crate::mime::messages::{
-    format_header_value_too_long, format_unclosed_boundary,
-    MIMEMessages,
+    format_header_value_too_long, format_unclosed_boundary, MIMEMessages,
 };
 use crate::mime::utils::{decode_token_header_value, index_of, is_token,
                          is_valid_boundary};
-use crate::mime::wire_sink::MimeWireSink;
+use crate::mime::wire_sink::{MimeWireSink, NoWire};
 
-const MAX_HEADER_LINE_LENGTH: usize = 998;
 const INITIAL_HEADER_VALUE_CAPACITY: usize = 1024;
-const DEFAULT_MAX_HEADER_VALUE_SIZE: usize = 32 * 1024;
+const DEFAULT_BUFFER_SIZE: usize = 8192;
+const DEFAULT_CHUNK_SIZE: usize = 4096;
 
 #[derive(Debug, Default, Clone)]
 pub struct MessageHeaderState {
@@ -70,17 +73,38 @@ const MAX_CANDIDATE_LINE: usize = 76;
 /// Longest quoted-printable / uuencode line buffered whole before decoding.
 const MAX_ENCODED_LINE: usize = 8192;
 
-/// Event-driven MIME parser with rprotobuf-style `receive(&mut &[u8])` contract.
+/// Event-driven MIME parser.
 ///
-/// Header lines are parsed whole: a partial header line stays in the
-/// caller's slice. Body bytes are consumed as they arrive and delivered as
-/// zero-copy runs; the parser only holds back a possible boundary line and
-/// the line ending before it.
-pub struct MimeParser<'a, H: MimeHandler + ?Sized> {
-    handler: &'a mut H,
-    /// Optional wire sink for DKIM-style raw capture (not exposed on [`MimeHandler`]).
-    wire: Option<&'a mut dyn MimeWireSink>,
-    locator: MimeLocator,
+/// The parser reads from a caller-owned [`LoopBuf`] and holds none of the
+/// message. [`Self::receive`] consumes what it can use and leaves the rest in
+/// the ring, to be presented again once the caller has added to it. A header
+/// line is used whole, so a partial one stays in the ring; the ring therefore
+/// has to be able to hold the longest header line, which RFC 5322 limits to
+/// 998 bytes. Body bytes are consumed as they arrive and delivered as
+/// zero-copy runs; the parser only holds back a possible boundary line and the
+/// line ending before it.
+///
+/// A header's value is joined from its folded lines and held until the last
+/// has arrived, up to [`ParserLimits::max_header_value_size`].
+///
+/// The parser owns its handler. To keep the handler yourself, lend it:
+/// `MimeParser::new(&mut handler)` works because `&mut H` is a
+/// [`MimeHandler`] whenever `H` is. Use [`Self::handler`], [`Self::handler_mut`]
+/// and [`Self::into_handler`] to get at one the parser owns.
+pub struct MimeParser<H: MimeHandler, W: MimeWireSink = NoWire> {
+    handler: H,
+    /// Wire-accurate capture for DKIM; [`NoWire`] unless wrapped by
+    /// [`crate::DkimMessageParser`].
+    wire: W,
+    locator: Rc<SharedLocator>,
+    limits: ParserLimits,
+    /// Only used to size [`Self::parse`]'s own ring; `receive` reads whatever
+    /// ring the caller chose.
+    buffer_size: usize,
+    /// The most body bytes handed to the handler at a time.
+    chunk_size: usize,
+    /// A header line that straddles the ring's wrap is joined here.
+    line_scratch: Vec<u8>,
     state: State,
     boundaries: Vec<String>,
     boundary_set: bool,
@@ -91,8 +115,6 @@ pub struct MimeParser<'a, H: MimeHandler + ?Sized> {
     header_raw_name: Option<String>,
     header_raw_sink: Vec<u8>,
     strip_header_whitespace: bool,
-    max_buffer_size: usize,
-    max_header_value_size: usize,
     decode_buffer: Vec<u8>,
     transfer_encoding: TransferEncoding,
     /// base64 characters of an incomplete quantum; completed by later input
@@ -109,25 +131,39 @@ pub struct MimeParser<'a, H: MimeHandler + ?Sized> {
     cand: [u8; MAX_CANDIDATE_LINE],
     cand_len: usize,
     underflow: bool,
+    closed: bool,
 }
 
-impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
-    pub fn new(handler: &'a mut H) -> Self {
-        Self::build(handler, None)
+impl<H: MimeHandler> MimeParser<H> {
+    /// Creates a parser that owns `handler`, with the default limits.
+    pub fn new(handler: H) -> Self {
+        Self::build(handler, NoWire, ParserLimits::default())
     }
 
-    /// Like [`Self::new`], but also delivers wire-accurate header/body bytes to `wire`.
+    /// Creates a parser with the given limits.
+    pub fn with_limits(handler: H, limits: ParserLimits) -> Self {
+        Self::build(handler, NoWire, limits)
+    }
+}
+
+impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
+    /// Like [`MimeParser::new`], but also delivers wire-accurate header/body
+    /// bytes to `wire`.
     ///
     /// Used by [`crate::DkimMessageParser`]; not part of the everyday handler API.
-    pub(crate) fn with_wire(handler: &'a mut H, wire: &'a mut dyn MimeWireSink) -> Self {
-        Self::build(handler, Some(wire))
+    pub(crate) fn with_wire(handler: H, wire: W) -> Self {
+        Self::build(handler, wire, ParserLimits::default())
     }
 
-    fn build(handler: &'a mut H, wire: Option<&'a mut dyn MimeWireSink>) -> Self {
+    fn build(handler: H, wire: W, limits: ParserLimits) -> Self {
         Self {
             handler,
             wire,
-            locator: MimeLocator::default(),
+            locator: Rc::new(SharedLocator::new()),
+            limits,
+            buffer_size: DEFAULT_BUFFER_SIZE,
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            line_scratch: Vec::new(),
             state: State::Init,
             boundaries: Vec::new(),
             boundary_set: false,
@@ -137,8 +173,6 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
             header_raw_name: None,
             header_raw_sink: Vec::new(),
             strip_header_whitespace: true,
-            max_buffer_size: 4096,
-            max_header_value_size: DEFAULT_MAX_HEADER_VALUE_SIZE,
             decode_buffer: Vec::new(),
             transfer_encoding: TransferEncoding::Binary,
             b64_carry: [0; 3],
@@ -150,13 +184,78 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
             cand: [0; MAX_CANDIDATE_LINE],
             cand_len: 0,
             underflow: false,
+            closed: false,
         }
     }
 
-    pub fn locator(&self) -> &MimeLocator {
-        &self.locator
+    /// The limits in force.
+    pub fn limits(&self) -> &ParserLimits {
+        &self.limits
     }
 
+    /// Mutable access to the limits, to change one without restating the rest.
+    pub fn limits_mut(&mut self) -> &mut ParserLimits {
+        &mut self.limits
+    }
+
+    /// Replaces the limits.
+    pub fn set_limits(&mut self, limits: ParserLimits) {
+        self.limits = limits;
+    }
+
+    /// Sets the size of the ring [`Self::parse`] allocates for itself. It has
+    /// no effect on [`Self::receive`], which reads whatever ring it is given.
+    ///
+    /// # Panics
+    ///
+    /// If `buffer_size` is zero.
+    pub fn set_buffer_size(&mut self, buffer_size: usize) {
+        assert!(buffer_size > 0, "buffer size must be positive");
+        self.buffer_size = buffer_size;
+    }
+
+    /// Sets the most body bytes handed to the handler in one call, and the size
+    /// of the buffer the transfer decoders fill. Default: 4096.
+    ///
+    /// # Panics
+    ///
+    /// If `chunk_size` is zero.
+    pub fn set_chunk_size(&mut self, chunk_size: usize) {
+        assert!(chunk_size > 0, "chunk size must be positive");
+        self.chunk_size = chunk_size;
+    }
+
+    /// The handler the parser is driving.
+    pub fn handler(&self) -> &H {
+        &self.handler
+    }
+
+    /// Mutable access to the handler between calls to [`Self::receive`].
+    pub fn handler_mut(&mut self) -> &mut H {
+        &mut self.handler
+    }
+
+    /// Takes the handler back, dropping the parser.
+    pub fn into_handler(self) -> H {
+        self.handler
+    }
+
+    pub(crate) fn wire(&self) -> &W {
+        &self.wire
+    }
+
+    pub(crate) fn wire_mut(&mut self) -> &mut W {
+        &mut self.wire
+    }
+
+    /// Where the parser is in the message. The same locator the handler was
+    /// given, and live.
+    pub fn locator(&self) -> Rc<dyn Locator> {
+        self.locator.clone()
+    }
+
+    /// True if the last [`Self::receive`] left an incomplete line in the ring.
+    /// More data is needed before parsing can continue.
     pub fn is_underflow(&self) -> bool {
         self.underflow
     }
@@ -165,113 +264,131 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         decode_token_header_value(data, self.strip_header_whitespace)
     }
 
-    pub fn set_max_buffer_size(&mut self, max_buffer_size: usize) -> ParseResult<()> {
-        if max_buffer_size == 0 {
-            return Err(MimeParseError::new(
-                MIMEMessages::MAX_BUFFER_SIZE_NOT_POSITIVE,
+    /// Parses as many complete lines of headers and as much body as possible
+    /// from `buf`, calling the handler and consuming them from the ring.
+    ///
+    /// An incomplete header line stays in the ring and
+    /// [`Self::is_underflow`] returns true. Add to the ring after it and call
+    /// this again.
+    ///
+    /// # Errors
+    ///
+    /// A [`ParseError`] if the message is malformed, a limit is exceeded, the
+    /// handler returned an error, or `buf` is full of a single header line that
+    /// is not yet complete (it can never fit).
+    pub fn receive(&mut self, buf: &mut LoopBuf) -> ParseResult<()> {
+        if self.closed {
+            return Err(ParseError::new(
+                "parser is closed: call reset() to parse another message",
             ));
         }
-        self.max_buffer_size = max_buffer_size;
-        Ok(())
-    }
-
-    pub fn set_max_header_value_size(&mut self, max_header_value_size: usize) -> ParseResult<()> {
-        if max_header_value_size == 0 {
-            return Err(MimeParseError::new(
-                MIMEMessages::MAX_HEADER_VALUE_SIZE_NOT_POSITIVE,
-            ));
-        }
-        self.max_header_value_size = max_header_value_size;
-        Ok(())
-    }
-
-    pub fn receive(&mut self, data: &mut &[u8]) -> ParseResult<()> {
         self.underflow = false;
 
         if self.state == State::Init {
-            self.locator.reset();
-            self.handler.set_locator(&self.locator)?;
+            self.handler.set_locator(self.locator.clone());
             self.handler.start_entity(None)?;
             self.start_headers();
         }
 
-        let bytes = *data;
-        let mut pos = 0usize;
-        while pos < bytes.len() {
+        while !buf.is_empty() {
             if self.state == State::Header {
-                let rest = &bytes[pos..];
-                match index_of(rest, b'\n') {
-                    Some(nl) => {
-                        let line = &rest[..=nl];
-                        pos += nl + 1;
-                        self.locator.offset += line.len() as i64;
-                        self.locator.column_number += line.len() as i64;
-                        self.header_line(line)?;
-                        self.locator.line_number += 1;
-                        self.locator.column_number = 0;
-                    }
-                    None => {
-                        if rest.len() > MAX_HEADER_LINE_LENGTH + 1 {
-                            return Err(HeaderLineTooLongError::new(
-                                MIMEMessages::HEADER_LINE_TOO_LONG,
-                                &self.locator,
-                            )
-                            .into());
-                        }
-                        break;
-                    }
+                if !self.header_line_from(buf)? {
+                    break;
                 }
             } else {
-                pos += self.body_chunk(&bytes[pos..])?;
+                let used = {
+                    let (first, second) = buf.readable_spans();
+                    self.body_chunk(if first.is_empty() { second } else { first })?
+                };
+                buf.advance(used);
             }
         }
 
-        *data = &bytes[pos..];
-        self.underflow = !data.is_empty()
+        self.underflow = !buf.is_empty()
             || (self.state != State::Header
                 && self.state != State::Body
                 && self.line_state != LineState::Start);
         Ok(())
     }
 
-    /// Feed the last of the input and close. Unlike [`Self::receive`]
-    /// followed by [`Self::close`], a final line that has no terminator is
-    /// still delivered: as body content, or as the closing boundary. Mail
-    /// stored in files and IMAP literals routinely end that way.
-    pub fn finish(&mut self, data: &mut &[u8]) -> ParseResult<()> {
-        self.receive(data)?;
-        if !data.is_empty() {
-            let line = *data;
-            *data = &[];
-            self.locator.offset += line.len() as i64;
-            self.locator.column_number += line.len() as i64;
-            self.header_line(line)?;
+    /// Takes the header line at the front of `buf`, if it is complete.
+    fn header_line_from(&mut self, buf: &mut LoopBuf) -> ParseResult<bool> {
+        let newline = {
+            let (first, second) = buf.readable_spans();
+            index_of(first, b'\n').or_else(|| index_of(second, b'\n').map(|i| first.len() + i))
+        };
+        let Some(newline) = newline else {
+            if let Some(max) = self.limits.max_header_line_length {
+                if buf.len() > max + 1 {
+                    return Err(ParseError::with_locator(
+                        MIMEMessages::HEADER_LINE_TOO_LONG,
+                        &*self.locator,
+                    ));
+                }
+            }
+            if buf.is_full() {
+                return Err(ParseError::with_locator(
+                    MIMEMessages::HEADER_LINE_DOES_NOT_FIT,
+                    &*self.locator,
+                ));
+            }
+            return Ok(false);
+        };
+        let len = newline + 1;
+        self.take_header_line(buf, len, true)?;
+        Ok(true)
+    }
+
+    /// Uses the `len` bytes at the front of `buf` as one header line and
+    /// consumes them. `ended` is false for a final line with no terminator.
+    fn take_header_line(&mut self, buf: &mut LoopBuf, len: usize, ended: bool) -> ParseResult<()> {
+        let mut scratch = std::mem::take(&mut self.line_scratch);
+        let result = {
+            let spans = buf.spans();
+            let line: &[u8] = match spans.contiguous(0..len) {
+                Some(line) => line,
+                None => {
+                    scratch.clear();
+                    scratch.resize(len, 0);
+                    spans.copy_to(0, &mut scratch);
+                    &scratch
+                }
+            };
+            self.locator.advance_line(len);
+            let result = self.header_line(line);
+            if result.is_ok() && ended {
+                self.locator.end_line();
+            }
+            result
+        };
+        self.line_scratch = scratch;
+        buf.advance(len);
+        result
+    }
+
+    /// Completes parsing and validates state.
+    ///
+    /// `buf` is the same ring passed to [`Self::receive`] throughout. Anything
+    /// still in it is parsed first, and a final line with no terminator is
+    /// delivered all the same: as a header, as body content, or as the closing
+    /// boundary. Mail stored in files and IMAP literals routinely ends that
+    /// way. Fails if a multipart body is left unclosed. After closing, further
+    /// calls to [`Self::receive`] return an error; use [`Self::reset`] to parse
+    /// another message.
+    pub fn close(&mut self, buf: &mut LoopBuf) -> ParseResult<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.receive(buf)?;
+        if !buf.is_empty() {
+            let len = buf.len();
+            self.take_header_line(buf, len, false)?;
         } else if self.cand_len > 0 {
             // An unterminated line that may be a boundary.
             self.candidate_line_complete()?;
         }
         self.underflow = false;
-        self.close()
-    }
-
-    pub fn close(&mut self) -> ParseResult<()> {
-        if self.underflow {
-            match self.state {
-                State::Init | State::Header => {
-                    return Err(MimeParseError::with_locator(
-                        MIMEMessages::INCOMPLETE_HEADER,
-                        &self.locator,
-                    ));
-                }
-                State::FirstBoundary | State::BoundaryOrContent | State::BoundaryOnly => {
-                    return Err(MimeParseError::with_locator(
-                        MIMEMessages::INCOMPLETE_MULTIPART,
-                        &self.locator,
-                    ));
-                }
-                State::Body => {}
-            }
-        }
+        self.closed = true;
 
         if self.header_active {
             // Input ended inside the headers: the last one still counts.
@@ -284,9 +401,9 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
 
         if !self.boundaries.is_empty() {
             let boundary = self.boundaries.last().unwrap().clone();
-            return Err(MimeParseError::with_locator(
+            return Err(ParseError::with_locator(
                 format_unclosed_boundary(&boundary),
-                &self.locator,
+                &*self.locator,
             ));
         }
 
@@ -294,8 +411,11 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         Ok(())
     }
 
+    /// Resets the parser to its initial state, to reuse it for a new
+    /// independent message. The limits and handler are kept; the ring passed to
+    /// [`Self::receive`] is caller-owned and not this parser's concern.
     pub fn reset(&mut self) {
-        self.locator.reset();
+        self.locator = Rc::new(SharedLocator::new());
         self.state = State::Init;
         self.boundaries.clear();
         self.boundary_set = false;
@@ -308,6 +428,37 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         self.clear_body_state();
         self.transfer_encoding = TransferEncoding::Binary;
         self.underflow = false;
+        self.closed = false;
+    }
+
+    /// Parses a message from a [`Read`] source.
+    ///
+    /// The parser is automatically reset before parsing. Allocates one ring
+    /// (sized by [`Self::set_buffer_size`]) and never grows it: reads from
+    /// `reader` into its spare capacity and calls [`Self::receive`] until EOF,
+    /// then [`Self::close`]. The reader is not closed.
+    pub fn parse<R: Read>(&mut self, mut reader: R) -> ParseResult<()> {
+        self.reset();
+
+        let mut buf = LoopBuf::with_capacity(self.buffer_size);
+        loop {
+            let (spare, _) = buf.spare_capacity_mut();
+            if spare.is_empty() {
+                // `receive` reports a ring full of one unfinished header line,
+                // so this is not reached; it is here so a bug cannot loop forever
+                return Err(ParseError::new("receive buffer too small"));
+            }
+            let bytes_read = reader
+                .read(spare)
+                .map_err(|e| ParseError::new(format!("I/O error reading stream: {e}")))?;
+            if bytes_read == 0 {
+                break;
+            }
+            buf.commit_write(bytes_read);
+            self.receive(&mut buf)?;
+        }
+
+        self.close(&mut buf)
     }
 
     fn clear_body_state(&mut self) {
@@ -327,9 +478,7 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
 
     fn end_headers(&mut self) -> ParseResult<()> {
         self.flush_header()?;
-        if let Some(wire) = self.wire.as_mut() {
-            wire.mark_headers_complete()?;
-        }
+        self.wire.mark_headers_complete()?;
         self.handler.end_headers()?;
         self.clear_body_state();
         if self.boundary_set {
@@ -350,23 +499,22 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         }
 
         let length = end - start;
-        if length > MAX_HEADER_LINE_LENGTH {
-            return Err(HeaderLineTooLongError::new(
+        if self.limits.max_header_line_length.is_some_and(|max| length > max) {
+            return Err(ParseError::with_locator(
                 MIMEMessages::HEADER_LINE_TOO_LONG,
-                &self.locator,
-            )
-            .into());
+                &*self.locator,
+            ));
         }
 
         // Raw bytes are only kept for a DKIM wire sink.
-        let capture = self.wire.is_some();
+        let capture = W::CAPTURES;
 
         let first = line[start];
         if first == b' ' || first == b'\t' {
             if !self.header_active {
-                return Err(MimeParseError::with_locator(
+                return Err(ParseError::with_locator(
                     MIMEMessages::NO_FIELD_NAME,
-                    &self.locator,
+                    &*self.locator,
                 ));
             }
             if capture {
@@ -394,9 +542,9 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
 
         let colon_pos = index_of(&line[start..end], b':').map(|i| start + i);
         let Some(colon_pos) = colon_pos else {
-            return Err(MimeParseError::with_locator(
+            return Err(ParseError::with_locator(
                 MIMEMessages::NO_COLON_IN_HEADER,
-                &self.locator,
+                &*self.locator,
             ));
         };
 
@@ -405,18 +553,18 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
             name_end -= 1;
         }
         if name_end <= start {
-            return Err(MimeParseError::with_locator(
+            return Err(ParseError::with_locator(
                 MIMEMessages::FIELD_NAME_EMPTY,
-                &self.locator,
+                &*self.locator,
             ));
         }
 
         for i in start..name_end {
             let c = line[i];
             if c < 33 || c > 126 {
-                return Err(MimeParseError::with_locator(
+                return Err(ParseError::with_locator(
                     format!("{}: {}", MIMEMessages::ILLEGAL_FIELD_NAME_CHAR, c),
-                    &self.locator,
+                    &*self.locator,
                 ));
             }
         }
@@ -571,22 +719,9 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
             self.scan_multipart(data)?
         };
         let consumed = &data[..used];
-        self.advance_locator(consumed);
-        if let Some(wire) = self.wire.as_mut() {
-            wire.raw_body_content(consumed)?;
-        }
+        self.locator.advance(consumed);
+        self.wire.raw_body_content(consumed)?;
         Ok(used)
-    }
-
-    fn advance_locator(&mut self, bytes: &[u8]) {
-        self.locator.offset += bytes.len() as i64;
-        match bytes.iter().rposition(|&b| b == b'\n') {
-            None => self.locator.column_number += bytes.len() as i64,
-            Some(last) => {
-                self.locator.line_number += bytes.iter().filter(|&&b| b == b'\n').count() as i64;
-                self.locator.column_number = (bytes.len() - 1 - last) as i64;
-            }
-        }
     }
 
     /// True for preamble and epilogue text, which is not part of any part.
@@ -782,7 +917,7 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
         }
         match self.transfer_encoding {
             TransferEncoding::Binary => {
-                for chunk in data.chunks(self.max_buffer_size) {
+                for chunk in data.chunks(self.chunk_size) {
                     self.route(chunk)?;
                 }
                 Ok(())
@@ -803,9 +938,9 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
     }
 
     fn ensure_decode_buffer(&mut self) {
-        if self.decode_buffer.capacity() < self.max_buffer_size {
+        if self.decode_buffer.capacity() < self.chunk_size {
             self.decode_buffer
-                .reserve(self.max_buffer_size - self.decode_buffer.len());
+                .reserve(self.chunk_size - self.decode_buffer.len());
         }
     }
 
@@ -823,7 +958,7 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
 
     fn decode_base64_stream(&mut self, data: &[u8]) -> ParseResult<()> {
         self.ensure_decode_buffer();
-        let max = self.max_buffer_size.max(3);
+        let max = self.chunk_size.max(3);
         let mut src = data;
 
         if self.b64_carry_len > 0 {
@@ -935,7 +1070,7 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
 
     fn decode_lines(&mut self, lines: &[u8], end_of_stream: bool) -> ParseResult<()> {
         self.ensure_decode_buffer();
-        let max = self.max_buffer_size.max(3);
+        let max = self.chunk_size.max(3);
         let mut src = lines;
         while !src.is_empty() {
             self.decode_buffer.clear();
@@ -989,12 +1124,13 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
     }
 
     fn check_header_size(&self, current: usize, required: usize) -> ParseResult<()> {
-        if current + required > self.max_header_value_size {
-            return Err(HeaderValueTooLongError::new(
-                format_header_value_too_long(self.max_header_value_size),
-                &self.locator,
-            )
-            .into());
+        if let Some(max) = self.limits.max_header_value_size {
+            if current + required > max {
+                return Err(ParseError::with_locator(
+                    format_header_value_too_long(max),
+                    &*self.locator,
+                ));
+            }
         }
         Ok(())
     }
@@ -1002,9 +1138,7 @@ impl<'a, H: MimeHandler + ?Sized> MimeParser<'a, H> {
     fn flush_raw_header(&mut self) -> ParseResult<()> {
         if let Some(name) = self.header_raw_name.take() {
             if !self.header_raw_sink.is_empty() {
-                if let Some(wire) = self.wire.as_mut() {
-                    wire.raw_header(&name, &self.header_raw_sink)?;
-                }
+                self.wire.raw_header(&name, &self.header_raw_sink)?;
             }
             self.header_raw_sink.clear();
         }

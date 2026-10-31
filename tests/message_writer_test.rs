@@ -1,3 +1,4 @@
+use loopbuf::LoopBuf;
 use rmimeparser::{
     ContentType, EmailAddress, MessageHandler, MessageParser, MessageWriter, MimeHandler,
     OffsetDateTime, ParseResult,
@@ -41,6 +42,13 @@ impl MessageHandler for Capture {
     }
 }
 
+/// A ring holding `bytes`, with room to spare.
+fn ring(bytes: &[u8]) -> LoopBuf {
+    let mut buf = LoopBuf::with_capacity(bytes.len() + 2048);
+    buf.extend_from_slice(bytes);
+    buf
+}
+
 #[test]
 fn write_message_with_subject_and_date() {
     let mut out = Vec::new();
@@ -81,9 +89,9 @@ fn write_message_with_subject_and_date() {
     let mut capture = Capture::default();
     {
         let mut parser = MessageParser::new(&mut capture);
-        let mut input = out.as_slice();
+        let mut input = ring(&out);
         parser.receive(&mut input).unwrap();
-        parser.close().unwrap();
+        parser.close(&mut input).unwrap();
     }
 
     assert_eq!(capture.subject.as_deref(), Some("Café résumé"));

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
+use loopbuf::LoopBuf;
 use rmimeparser::{
-    ContentId, ContentType, EmailAddress, MessageHandler, MessageParser, MimeHandler, MimeLocator,
+    ContentId, ContentType, EmailAddress, Locator, MessageHandler, MessageParser, MimeHandler,
     MimeVersion, OffsetDateTime, ParseResult,
 };
 
@@ -47,9 +49,7 @@ impl TestMessageHandler {
 }
 
 impl MimeHandler for TestMessageHandler {
-    fn set_locator(&mut self, _locator: &MimeLocator) -> ParseResult<()> {
-        Ok(())
-    }
+    fn set_locator(&mut self, _locator: Rc<dyn Locator>) {}
 
     fn start_entity(&mut self, _boundary: Option<&str>) -> ParseResult<()> {
         self.entity_count += 1;
@@ -107,11 +107,18 @@ impl MessageHandler for TestMessageHandler {
     }
 }
 
+/// A ring holding `bytes`, with room to spare.
+fn ring(bytes: &[u8]) -> LoopBuf {
+    let mut buf = LoopBuf::with_capacity(bytes.len() + 2048);
+    buf.extend_from_slice(bytes);
+    buf
+}
+
 fn parse(content: &str, handler: &mut TestMessageHandler) {
     let mut parser = MessageParser::new(handler);
-    let mut data = content.as_bytes();
+    let mut data = ring(content.as_bytes());
     parser.receive(&mut data).unwrap();
-    parser.close().unwrap();
+    parser.close(&mut data).unwrap();
 }
 
 // --- Date header tests ---
@@ -464,9 +471,9 @@ fn test_reset() {
 
     {
         let mut parser = MessageParser::new(&mut handler);
-        let mut data = b"From: alice@example.com\r\n\r\nFirst".as_slice();
+        let mut data = ring(b"From: alice@example.com\r\n\r\nFirst");
         parser.receive(&mut data).unwrap();
-        parser.close().unwrap();
+        parser.close(&mut data).unwrap();
     }
     assert!(handler.address_headers.contains_key("From"));
 
@@ -479,9 +486,9 @@ fn test_reset() {
 
     {
         let mut parser = MessageParser::new(&mut handler);
-        let mut data = b"From: bob@example.com\r\n\r\nSecond".as_slice();
+        let mut data = ring(b"From: bob@example.com\r\n\r\nSecond");
         parser.receive(&mut data).unwrap();
-        parser.close().unwrap();
+        parser.close(&mut data).unwrap();
     }
 
     let addresses = handler.address_headers.get("From").expect("From");

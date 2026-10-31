@@ -1,23 +1,27 @@
 //! RFC 5322 message parser (wraps MIME parser).
 
-use std::mem::MaybeUninit;
+use std::io::Read;
+use std::rc::Rc;
+
+use loopbuf::LoopBuf;
 
 use crate::mime::content_types::{ContentDisposition, ContentId, ContentType, MimeVersion};
 use crate::mime::error::ParseResult;
-use crate::mime::handler::{MimeHandler, MimeLocator};
+use crate::mime::handler::{Locator, MimeHandler};
+use crate::mime::limits::ParserLimits;
 use crate::mime::parser::{MessageHeaderState, MimeParser};
 use crate::rfc5322::headers;
 use crate::rfc5322::message_handler::MessageHandler;
 
 /// Bridges [`MessageHandler`] to [`MimeHandler`] and dispatches RFC 5322 headers.
-pub(crate) struct MessageBridge<'a, H: MessageHandler + ?Sized> {
-    pub(crate) inner: &'a mut H,
+pub(crate) struct MessageBridge<H: MessageHandler> {
+    pub(crate) inner: H,
     pub(crate) state: MessageHeaderState,
     strip_header_whitespace: bool,
 }
 
-impl<'a, H: MessageHandler + ?Sized> MessageBridge<'a, H> {
-    pub fn new(handler: &'a mut H) -> Self {
+impl<H: MessageHandler> MessageBridge<H> {
+    pub fn new(handler: H) -> Self {
         Self {
             inner: handler,
             state: MessageHeaderState::default(),
@@ -26,8 +30,8 @@ impl<'a, H: MessageHandler + ?Sized> MessageBridge<'a, H> {
     }
 }
 
-impl<H: MessageHandler + ?Sized> MimeHandler for MessageBridge<'_, H> {
-    fn set_locator(&mut self, locator: &MimeLocator) -> ParseResult<()> {
+impl<H: MessageHandler> MimeHandler for MessageBridge<H> {
+    fn set_locator(&mut self, locator: Rc<dyn Locator>) {
         self.inner.set_locator(locator)
     }
 
@@ -35,7 +39,7 @@ impl<H: MessageHandler + ?Sized> MimeHandler for MessageBridge<'_, H> {
         headers::dispatch_rfc5322_header(
             self.strip_header_whitespace,
             &mut self.state,
-            self.inner,
+            &mut self.inner,
             name,
             value,
         )
@@ -86,64 +90,96 @@ impl<H: MessageHandler + ?Sized> MimeHandler for MessageBridge<'_, H> {
     }
 }
 
-struct MessageParserInner<'a, H: MessageHandler + ?Sized> {
-    bridge: MessageBridge<'a, H>,
-    mime: MaybeUninit<MimeParser<'a, MessageBridge<'a, H>>>,
-}
-
 /// RFC 5322 message parser using composition over [`MimeParser`].
-pub struct MessageParser<'a, H: MessageHandler + ?Sized> {
-    inner: Box<MessageParserInner<'a, H>>,
+///
+/// Reads from a caller-owned [`LoopBuf`] and owns its handler, as
+/// [`MimeParser`] does.
+pub struct MessageParser<H: MessageHandler> {
+    mime: MimeParser<MessageBridge<H>>,
 }
 
-impl<'a, H: MessageHandler + ?Sized> MessageParser<'a, H> {
-    pub fn new(handler: &'a mut H) -> Self {
-        let inner = Box::new(MessageParserInner {
-            bridge: MessageBridge::new(handler),
-            mime: MaybeUninit::uninit(),
-        });
-        let ptr = Box::into_raw(inner);
-        unsafe {
-            let bridge_ref = &mut (*ptr).bridge;
-            (*ptr).mime.write(MimeParser::new(bridge_ref));
-            Self {
-                inner: Box::from_raw(ptr),
-            }
+impl<H: MessageHandler> MessageParser<H> {
+    pub fn new(handler: H) -> Self {
+        Self {
+            mime: MimeParser::new(MessageBridge::new(handler)),
+        }
+    }
+
+    /// Creates a parser with the given limits.
+    pub fn with_limits(handler: H, limits: ParserLimits) -> Self {
+        Self {
+            mime: MimeParser::with_limits(MessageBridge::new(handler), limits),
         }
     }
 
     pub fn set_smtp_utf8(&mut self, smtp_utf8: bool) {
-        self.inner.bridge.state.smtp_utf8 = smtp_utf8;
+        self.mime.handler_mut().state.smtp_utf8 = smtp_utf8;
     }
 
     pub fn is_smtp_utf8(&self) -> bool {
-        self.inner.bridge.state.smtp_utf8
+        self.mime.handler().state.smtp_utf8
     }
 
-    pub fn receive(&mut self, data: &mut &[u8]) -> ParseResult<()> {
-        let mime = unsafe { self.inner.mime.assume_init_mut() };
-        mime.receive(data)
+    pub fn limits(&self) -> &ParserLimits {
+        self.mime.limits()
     }
 
-    pub fn close(&mut self) -> ParseResult<()> {
-        let mime = unsafe { self.inner.mime.assume_init_mut() };
-        mime.close()
+    pub fn limits_mut(&mut self) -> &mut ParserLimits {
+        self.mime.limits_mut()
     }
 
-    /// Feed the last of the input and close; see [`MimeParser::finish`].
-    pub fn finish(&mut self, data: &mut &[u8]) -> ParseResult<()> {
-        let mime = unsafe { self.inner.mime.assume_init_mut() };
-        mime.finish(data)
+    pub fn set_limits(&mut self, limits: ParserLimits) {
+        self.mime.set_limits(limits)
+    }
+
+    pub fn set_buffer_size(&mut self, buffer_size: usize) {
+        self.mime.set_buffer_size(buffer_size)
+    }
+
+    pub fn set_chunk_size(&mut self, chunk_size: usize) {
+        self.mime.set_chunk_size(chunk_size)
+    }
+
+    /// The handler the parser is driving.
+    pub fn handler(&self) -> &H {
+        &self.mime.handler().inner
+    }
+
+    /// Mutable access to the handler between calls to [`Self::receive`].
+    pub fn handler_mut(&mut self) -> &mut H {
+        &mut self.mime.handler_mut().inner
+    }
+
+    /// Takes the handler back, dropping the parser.
+    pub fn into_handler(self) -> H {
+        self.mime.into_handler().inner
+    }
+
+    pub fn locator(&self) -> Rc<dyn Locator> {
+        self.mime.locator()
+    }
+
+    /// See [`MimeParser::receive`].
+    pub fn receive(&mut self, buf: &mut LoopBuf) -> ParseResult<()> {
+        self.mime.receive(buf)
+    }
+
+    /// See [`MimeParser::close`].
+    pub fn close(&mut self, buf: &mut LoopBuf) -> ParseResult<()> {
+        self.mime.close(buf)
+    }
+
+    /// See [`MimeParser::parse`].
+    pub fn parse<R: Read>(&mut self, reader: R) -> ParseResult<()> {
+        self.mime.parse(reader)
     }
 
     pub fn reset(&mut self) {
-        let mime = unsafe { self.inner.mime.assume_init_mut() };
-        mime.reset();
-        self.inner.bridge.state = MessageHeaderState::default();
+        self.mime.reset();
+        self.mime.handler_mut().state = MessageHeaderState::default();
     }
 
     pub fn is_underflow(&self) -> bool {
-        let mime = unsafe { self.inner.mime.assume_init_ref() };
-        mime.is_underflow()
+        self.mime.is_underflow()
     }
 }

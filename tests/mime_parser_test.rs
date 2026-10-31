@@ -1,6 +1,9 @@
+use std::rc::Rc;
+
+use loopbuf::LoopBuf;
 use rmimeparser::{
-    decode_slice, index_of, ContentDisposition, ContentType, HeaderLineTooLongError,
-    HeaderValueTooLongError, MimeHandler, MimeParseError, MimeParser, MimeVersion, ParseResult,
+    decode_slice, index_of, ContentDisposition, ContentType, Locator, MimeHandler, MimeParser,
+    MimeVersion, ParseResult,
 };
 
 struct TestHandler {
@@ -28,9 +31,8 @@ impl TestHandler {
 }
 
 impl MimeHandler for TestHandler {
-    fn set_locator(&mut self, _locator: &rmimeparser::MimeLocator) -> ParseResult<()> {
+    fn set_locator(&mut self, _locator: Rc<dyn Locator>) {
         self.events.push("setLocator".to_string());
-        Ok(())
     }
 
     fn start_entity(&mut self, boundary: Option<&str>) -> ParseResult<()> {
@@ -89,25 +91,26 @@ impl MimeHandler for TestHandler {
     }
 }
 
-fn parse(parser: &mut MimeParser<'_, TestHandler>, content: &str) -> ParseResult<()> {
-    let mut input = content.as_bytes();
-    parser.receive(&mut input)?;
-    parser.close()
+type Parser<'a> = MimeParser<&'a mut TestHandler>;
+
+fn parse(parser: &mut Parser<'_>, content: &str) -> ParseResult<()> {
+    let mut ring = LoopBuf::with_capacity(content.len() + 2048);
+    ring.extend_from_slice(content.as_bytes());
+    parser.receive(&mut ring)?;
+    parser.close(&mut ring)
 }
 
-fn parse_with_compact(parser: &mut MimeParser<'_, TestHandler>, chunks: &[&[u8]]) -> ParseResult<()> {
-    let mut buffer = Vec::with_capacity(256);
+fn parse_with_compact(parser: &mut Parser<'_>, chunks: &[&[u8]]) -> ParseResult<()> {
+    let mut ring = LoopBuf::with_capacity(4096);
     for chunk in chunks {
-        buffer.extend_from_slice(chunk);
-        let mut slice = buffer.as_slice();
-        parser.receive(&mut slice)?;
-        buffer = slice.to_vec();
+        ring.extend_from_slice(chunk);
+        parser.receive(&mut ring)?;
     }
     assert!(
         !parser.is_underflow(),
         "Parser has unconsumed data at EOF"
     );
-    parser.close()
+    parser.close(&mut ring)
 }
 
 fn split_at(content: &str, positions: &[usize]) -> Vec<Vec<u8>> {
@@ -288,15 +291,14 @@ fn test_header_line_too_long() {
     let mut handler = TestHandler::new();
     let mut parser = MimeParser::new(&mut handler);
     let err = parse(&mut parser, &sb).unwrap_err();
-    assert!(matches!(err, MimeParseError { .. }));
-    let _ = HeaderLineTooLongError::new("header line too long", parser.locator());
+    assert!(err.message().contains("998"), "{err}");
 }
 
 #[test]
 fn test_header_value_too_long() {
     let mut handler = TestHandler::new();
     let mut parser = MimeParser::new(&mut handler);
-    parser.set_max_header_value_size(50).unwrap();
+    parser.limits_mut().max_header_value_size = Some(50);
 
     let mut sb = String::from("X: ");
     for _ in 0..49 {
@@ -305,7 +307,6 @@ fn test_header_value_too_long() {
     sb.push_str("\r\n aaaaa\r\n\r\n");
 
     let err = parse(&mut parser, &sb).unwrap_err();
-    let _ = HeaderValueTooLongError::new("too long", parser.locator());
     assert!(err.message().contains("maximum"));
 }
 

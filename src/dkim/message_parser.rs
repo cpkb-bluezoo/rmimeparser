@@ -1,20 +1,19 @@
 //! DKIM-oriented message parser (gumdrop `DKIMMessageParser` port).
 
-use std::mem::MaybeUninit;
+use std::io::Read;
+use std::rc::Rc;
+
+use loopbuf::LoopBuf;
 
 use crate::mime::error::ParseResult;
-use crate::mime::parser::MimeParser;
+use crate::mime::handler::Locator;
+use crate::mime::limits::ParserLimits;
+use crate::mime::parser::{MessageHeaderState, MimeParser};
 use crate::rfc5322::message_parser::MessageBridge;
 use crate::MessageHandler;
 
 use super::raw_capture::RawCapture;
 use super::raw_header::RawHeader;
-
-struct DkimParserInner<'a, H: MessageHandler + ?Sized> {
-    capture: RawCapture<'a>,
-    bridge: MessageBridge<'a, H>,
-    mime: MaybeUninit<MimeParser<'a, MessageBridge<'a, H>>>,
-}
 
 /// RFC 5322 message parser that captures raw header and body bytes for DKIM.
 ///
@@ -30,88 +29,116 @@ struct DkimParserInner<'a, H: MessageHandler + ?Sized> {
 /// verification/signing that only needs to feed a running digest), call
 /// [`Self::set_body_sink`] to divert body bytes to a caller-supplied
 /// callback instead.
-pub struct DkimMessageParser<'a, H: MessageHandler + ?Sized> {
-    inner: Box<DkimParserInner<'a, H>>,
+///
+/// Reads from a caller-owned [`LoopBuf`] and owns its handler, as
+/// [`crate::MimeParser`] does.
+pub struct DkimMessageParser<H: MessageHandler> {
+    mime: MimeParser<MessageBridge<H>, RawCapture>,
 }
 
-impl<'a, H: MessageHandler + ?Sized> DkimMessageParser<'a, H> {
-    pub fn new(handler: &'a mut H) -> Self {
-        let inner = Box::new(DkimParserInner {
-            capture: RawCapture::default(),
-            bridge: MessageBridge::new(handler),
-            mime: MaybeUninit::uninit(),
-        });
-        let ptr = Box::into_raw(inner);
-        unsafe {
-            let bridge_ref = &mut (*ptr).bridge;
-            let capture_ref = &mut (*ptr).capture;
-            (*ptr)
-                .mime
-                .write(MimeParser::with_wire(bridge_ref, capture_ref));
-            Self {
-                inner: Box::from_raw(ptr),
-            }
+impl<H: MessageHandler> DkimMessageParser<H> {
+    pub fn new(handler: H) -> Self {
+        Self {
+            mime: MimeParser::with_wire(MessageBridge::new(handler), RawCapture::default()),
         }
     }
 
     pub fn set_smtp_utf8(&mut self, smtp_utf8: bool) {
-        self.inner.bridge.state.smtp_utf8 = smtp_utf8;
+        self.mime.handler_mut().state.smtp_utf8 = smtp_utf8;
     }
 
     pub fn is_smtp_utf8(&self) -> bool {
-        self.inner.bridge.state.smtp_utf8
+        self.mime.handler().state.smtp_utf8
     }
 
-    pub fn receive(&mut self, data: &mut &[u8]) -> ParseResult<()> {
-        let mime = unsafe { self.inner.mime.assume_init_mut() };
-        mime.receive(data)
+    pub fn limits(&self) -> &ParserLimits {
+        self.mime.limits()
     }
 
-    pub fn close(&mut self) -> ParseResult<()> {
-        let mime = unsafe { self.inner.mime.assume_init_mut() };
-        mime.close()
+    pub fn limits_mut(&mut self) -> &mut ParserLimits {
+        self.mime.limits_mut()
     }
 
-    /// Feed the last of the input and close; see [`MimeParser::finish`].
-    pub fn finish(&mut self, data: &mut &[u8]) -> ParseResult<()> {
-        let mime = unsafe { self.inner.mime.assume_init_mut() };
-        mime.finish(data)
+    pub fn set_limits(&mut self, limits: ParserLimits) {
+        self.mime.set_limits(limits)
+    }
+
+    pub fn set_buffer_size(&mut self, buffer_size: usize) {
+        self.mime.set_buffer_size(buffer_size)
+    }
+
+    pub fn set_chunk_size(&mut self, chunk_size: usize) {
+        self.mime.set_chunk_size(chunk_size)
+    }
+
+    /// The handler the parser is driving.
+    pub fn handler(&self) -> &H {
+        &self.mime.handler().inner
+    }
+
+    /// Mutable access to the handler between calls to [`Self::receive`].
+    pub fn handler_mut(&mut self) -> &mut H {
+        &mut self.mime.handler_mut().inner
+    }
+
+    /// Takes the handler back, dropping the parser.
+    pub fn into_handler(self) -> H {
+        self.mime.into_handler().inner
+    }
+
+    pub fn locator(&self) -> Rc<dyn Locator> {
+        self.mime.locator()
+    }
+
+    /// See [`crate::MimeParser::receive`].
+    pub fn receive(&mut self, buf: &mut LoopBuf) -> ParseResult<()> {
+        self.mime.receive(buf)
+    }
+
+    /// See [`crate::MimeParser::close`].
+    pub fn close(&mut self, buf: &mut LoopBuf) -> ParseResult<()> {
+        self.mime.close(buf)
+    }
+
+    /// See [`crate::MimeParser::parse`].
+    pub fn parse<R: Read>(&mut self, reader: R) -> ParseResult<()> {
+        self.mime.reset();
+        self.mime.wire_mut().clear();
+        self.mime.parse(reader)
     }
 
     pub fn reset(&mut self) {
-        let mime = unsafe { self.inner.mime.assume_init_mut() };
-        mime.reset();
-        self.inner.bridge.state = crate::mime::parser::MessageHeaderState::default();
-        self.inner.capture.clear();
+        self.mime.reset();
+        self.mime.handler_mut().state = MessageHeaderState::default();
+        self.mime.wire_mut().clear();
     }
 
     pub fn is_underflow(&self) -> bool {
-        let mime = unsafe { self.inner.mime.assume_init_ref() };
-        mime.is_underflow()
+        self.mime.is_underflow()
     }
 
     pub fn raw_headers(&self) -> &[RawHeader] {
-        self.inner.capture.raw_headers()
+        self.mime.wire().raw_headers()
     }
 
     pub fn raw_header(&self, name: &str) -> Option<&RawHeader> {
-        self.inner.capture.raw_header(name)
+        self.mime.wire().raw_header(name)
     }
 
     pub fn all_raw_headers(&self, name: &str) -> Vec<&RawHeader> {
-        self.inner.capture.all_raw_headers(name)
+        self.mime.wire().all_raw_headers(name)
     }
 
     pub fn header_bytes(&self, name: &str) -> Option<&[u8]> {
-        self.inner.capture.header_bytes(name)
+        self.mime.wire().header_bytes(name)
     }
 
     pub fn all_header_bytes(&self, name: &str) -> Vec<&[u8]> {
-        self.inner.capture.all_header_bytes(name)
+        self.mime.wire().all_header_bytes(name)
     }
 
     pub fn raw_body(&self) -> &[u8] {
-        self.inner.capture.raw_body()
+        self.mime.wire().raw_body()
     }
 
     /// Divert raw body bytes to `sink`, called once per body chunk in wire
@@ -121,15 +148,19 @@ impl<'a, H: MessageHandler + ?Sized> DkimMessageParser<'a, H> {
     /// across the whole ordered header set, which — unlike the body — stays
     /// small for essentially all real messages).
     ///
+    /// The parser owns the sink, so it cannot borrow from the caller's stack:
+    /// share state with it through an `Rc<RefCell<_>>` (the parser is used from
+    /// one thread) or a channel.
+    ///
     /// Call this before feeding any body bytes to [`Self::receive`]
     /// (typically right after construction). [`Self::reset`] drops the
     /// sink along with everything else it clears; install a fresh one
     /// before reusing the parser for another message.
-    pub fn set_body_sink(&mut self, sink: impl FnMut(&[u8]) + 'a) {
-        self.inner.capture.set_body_sink(Box::new(sink));
+    pub fn set_body_sink(&mut self, sink: impl FnMut(&[u8]) + 'static) {
+        self.mime.wire_mut().set_body_sink(Box::new(sink));
     }
 
     pub fn is_headers_complete(&self) -> bool {
-        self.inner.capture.is_headers_complete()
+        self.mime.wire().is_headers_complete()
     }
 }

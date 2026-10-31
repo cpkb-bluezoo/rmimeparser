@@ -1,6 +1,7 @@
 //! base64 bodies whose lines are not a multiple of four characters: the
 //! partial quantum at the end of a line continues on the next line.
 
+use loopbuf::LoopBuf;
 use rmimeparser::{MimeHandler, MimeParser, ParseResult};
 
 #[derive(Default)]
@@ -30,21 +31,12 @@ fn parse_in_chunks(raw: &[u8], step: usize) -> Vec<Vec<u8>> {
     let mut h = Collect::default();
     {
         let mut p = MimeParser::new(&mut h);
-        let mut pending: Vec<u8> = Vec::new();
-        let mut offset = 0;
-        while offset < raw.len() {
-            let end = (offset + step).min(raw.len());
-            pending.extend_from_slice(&raw[offset..end]);
-            offset = end;
-            let mut slice = pending.as_slice();
-            if offset == raw.len() {
-                p.finish(&mut slice).unwrap();
-            } else {
-                p.receive(&mut slice).unwrap();
-            }
-            let consumed = pending.len() - slice.len();
-            pending.drain(..consumed);
+        let mut ring = LoopBuf::with_capacity(2048 + step);
+        for chunk in raw.chunks(step) {
+            ring.extend_from_slice(chunk);
+            p.receive(&mut ring).unwrap();
         }
+        p.close(&mut ring).unwrap();
     }
     h.bodies
 }

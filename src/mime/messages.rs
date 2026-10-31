@@ -9,11 +9,8 @@ impl MIMEMessages {
     pub const HEADER_VALUE_TOO_LONG: &'static str =
         "Unfolded header value exceeds maximum of {0} bytes";
     pub const ILLEGAL_FIELD_NAME_CHAR: &'static str = "Illegal field-name character";
-    pub const INCOMPLETE_HEADER: &'static str = "Incomplete header at end of stream";
-    pub const INCOMPLETE_MULTIPART: &'static str = "Incomplete multipart data at end of stream";
-    pub const MAX_BUFFER_SIZE_NOT_POSITIVE: &'static str = "maxBufferSize must be positive";
-    pub const MAX_HEADER_VALUE_SIZE_NOT_POSITIVE: &'static str =
-        "maxHeaderValueSize must be positive";
+    pub const HEADER_LINE_DOES_NOT_FIT: &'static str =
+        "Header line does not fit the receive buffer";
     pub const NO_COLON_IN_HEADER: &'static str = "No colon in header";
     pub const NO_FIELD_NAME: &'static str = "No field-name";
     pub const NO_HANDLER: &'static str = "No handler set";

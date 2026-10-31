@@ -1,3 +1,4 @@
+use loopbuf::LoopBuf;
 use rmimeparser::{
     Address, EmailAddressParser, MimeHandler, MimeParser, ParseResult,
 };
@@ -31,31 +32,17 @@ fn finish_in_chunks(raw: &[u8], step: usize) -> Collect {
     let mut h = Collect::default();
     {
         let mut p = MimeParser::new(&mut h);
-        let mut pending: Vec<u8> = Vec::new();
-        let mut offset = 0;
-        while offset < raw.len() {
-            let end = (offset + step).min(raw.len());
-            pending.extend_from_slice(&raw[offset..end]);
-            offset = end;
-            let mut slice = pending.as_slice();
-            if offset == raw.len() {
-                p.finish(&mut slice).unwrap();
-            } else {
-                p.receive(&mut slice).unwrap();
-            }
-            let left = slice.len();
-            let consumed = pending.len() - left;
-            pending.drain(..consumed);
+        let mut ring = LoopBuf::with_capacity(2048 + step);
+        for chunk in raw.chunks(step) {
+            ring.extend_from_slice(chunk);
+            p.receive(&mut ring).unwrap();
         }
-        if raw.is_empty() {
-            let mut empty: &[u8] = &[];
-            p.finish(&mut empty).unwrap();
-        }
+        p.close(&mut ring).unwrap();
     }
     h
 }
 
-/// A body whose last line has no terminator is still delivered by `finish`.
+/// A body whose last line has no terminator is still delivered by `close`.
 #[test]
 fn final_line_without_terminator_is_body_content() {
     let raw = b"Content-Type: text/plain\r\n\r\nHello, world.";

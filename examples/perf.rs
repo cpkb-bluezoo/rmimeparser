@@ -7,6 +7,7 @@
 //! Prints MB/s for the main paths and, via a counting global allocator, the
 //! number of allocations and bytes allocated per scenario.
 
+use loopbuf::LoopBuf;
 use rmimeparser::*;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
@@ -39,6 +40,9 @@ fn snapshot() -> (usize, usize) {
     (ALLOCS.load(Relaxed), BYTES.load(Relaxed))
 }
 
+/// The ring each parse reads through, as a socket reader would hold.
+const RING_SIZE: usize = 32 * 1024;
+
 /// Counts body bytes and callbacks; keeps nothing.
 #[derive(Default)]
 struct Tally {
@@ -59,9 +63,12 @@ fn parse_mime(msg: &[u8]) -> Tally {
     let mut h = Tally::default();
     {
         let mut p = MimeParser::new(&mut h);
-        let mut s = msg;
-        p.receive(&mut s).unwrap();
-        p.finish(&mut s).ok();
+        let mut ring = LoopBuf::with_capacity(RING_SIZE);
+        for chunk in msg.chunks(RING_SIZE / 2) {
+            ring.extend_from_slice(chunk);
+            p.receive(&mut ring).unwrap();
+        }
+        p.close(&mut ring).ok();
     }
     h
 }
@@ -70,9 +77,12 @@ fn parse_message(msg: &[u8]) -> Tally {
     let mut h = Tally::default();
     {
         let mut p = MessageParser::new(&mut h);
-        let mut s = msg;
-        p.receive(&mut s).unwrap();
-        p.finish(&mut s).ok();
+        let mut ring = LoopBuf::with_capacity(RING_SIZE);
+        for chunk in msg.chunks(RING_SIZE / 2) {
+            ring.extend_from_slice(chunk);
+            p.receive(&mut ring).unwrap();
+        }
+        p.close(&mut ring).ok();
     }
     h
 }

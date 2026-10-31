@@ -10,6 +10,10 @@ repository = "https://github.com/cpkb-bluezoo/rmimeparser"
 keywords = ["mime", "email", "rfc5322", "parser", "streaming"]
 categories = ["email", "parser-implementations"]
 
+[dependencies]
+# `path` until a loopbuf release includes what this crate uses.
+loopbuf = { version = "0.1", path = "../loopbuf" }
+
 [lib]
 name = "rmimeparser"
 path = "src/lib.rs"

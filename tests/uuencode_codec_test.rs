@@ -143,16 +143,12 @@ fn parser_decodes_an_x_uuencode_body() {
         let mut handler = BodyCollector::default();
         {
             let mut parser = MimeParser::new(&mut handler);
-            let mut pending: Vec<u8> = Vec::new();
+            let mut ring = loopbuf::LoopBuf::with_capacity(2048 + step);
             for chunk in message.chunks(step) {
-                pending.extend_from_slice(chunk);
-                let mut slice = pending.as_slice();
-                parser.receive(&mut slice).unwrap();
-                let left = slice.len();
-                let consumed = pending.len() - left;
-                pending.drain(..consumed);
+                ring.extend_from_slice(chunk);
+                parser.receive(&mut ring).unwrap();
             }
-            parser.close().unwrap();
+            parser.close(&mut ring).unwrap();
         }
         assert_eq!(handler.cte.as_deref(), Some("x-uuencode"), "step {step}");
         assert_eq!(handler.body, data, "step {step}");

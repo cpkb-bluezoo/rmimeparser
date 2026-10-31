@@ -7,17 +7,17 @@ use super::raw_header::RawHeader;
 
 /// Type-erased callback fed each raw body chunk as it streams in, in wire
 /// order — see [`RawCapture::set_body_sink`].
-type BodySink<'a> = Box<dyn FnMut(&[u8]) + 'a>;
+type BodySink = Box<dyn FnMut(&[u8])>;
 
 #[derive(Default)]
-pub struct RawCapture<'a> {
+pub struct RawCapture {
     raw_headers: Vec<RawHeader>,
     raw_body: Vec<u8>,
     headers_complete: bool,
-    body_sink: Option<BodySink<'a>>,
+    body_sink: Option<BodySink>,
 }
 
-impl<'a> std::fmt::Debug for RawCapture<'a> {
+impl std::fmt::Debug for RawCapture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RawCapture")
             .field("raw_headers", &self.raw_headers)
@@ -28,7 +28,7 @@ impl<'a> std::fmt::Debug for RawCapture<'a> {
     }
 }
 
-impl<'a> RawCapture<'a> {
+impl RawCapture {
     pub fn add_raw_header(&mut self, name: &str, bytes: &[u8]) {
         self.raw_headers
             .push(RawHeader::new(name.to_string(), bytes.to_vec()));
@@ -38,7 +38,7 @@ impl<'a> RawCapture<'a> {
     /// — see [`crate::DkimMessageParser::set_body_sink`] for the rationale
     /// and contract (must be set before the body starts arriving;
     /// [`Self::raw_body`] returns empty once a sink is installed).
-    pub fn set_body_sink(&mut self, sink: BodySink<'a>) {
+    pub fn set_body_sink(&mut self, sink: BodySink) {
         self.body_sink = Some(sink);
     }
 
@@ -102,7 +102,7 @@ impl<'a> RawCapture<'a> {
     }
 }
 
-impl<'a> MimeWireSink for RawCapture<'a> {
+impl MimeWireSink for RawCapture {
     fn raw_header(&mut self, name: &str, raw_bytes: &[u8]) -> ParseResult<()> {
         self.add_raw_header(name, raw_bytes);
         Ok(())

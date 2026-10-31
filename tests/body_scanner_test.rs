@@ -2,6 +2,7 @@
 //! chunking, the events must be the same, and hand-checked tricky inputs
 //! must come out exactly.
 
+use loopbuf::LoopBuf;
 use rmimeparser::{MimeHandler, MimeParser, ParseResult};
 
 /// Normalised event log: adjacent content callbacks are merged.
@@ -57,23 +58,27 @@ impl MimeHandler for Log {
     }
 }
 
-/// Feeds `chunks` in order, re-presenting any unconsumed tail, then `finish`.
+/// Feeds `chunks` in order through a ring of `capacity` bytes, which the
+/// parser leaves whatever it cannot use yet, then closes.
+fn drive(p: &mut MimeParser<&mut Log>, capacity: usize, chunks: &[&[u8]]) -> ParseResult<()> {
+    let mut ring = LoopBuf::with_capacity(capacity);
+    for chunk in chunks {
+        assert_eq!(ring.extend_from_slice(chunk), chunk.len(), "the ring holds the chunk");
+        p.receive(&mut ring)?;
+    }
+    p.close(&mut ring)
+}
+
+/// Room for a header line and the largest chunk.
+fn capacity_for(chunks: &[&[u8]]) -> usize {
+    2048 + chunks.iter().map(|c| c.len()).max().unwrap_or(0)
+}
+
 fn run(chunks: &[&[u8]]) -> Vec<String> {
     let mut h = Log::default();
     {
         let mut p = MimeParser::new(&mut h);
-        let mut pending: Vec<u8> = Vec::new();
-        for (n, chunk) in chunks.iter().enumerate() {
-            pending.extend_from_slice(chunk);
-            let mut slice = pending.as_slice();
-            if n + 1 == chunks.len() {
-                p.finish(&mut slice).unwrap();
-            } else {
-                p.receive(&mut slice).unwrap();
-            }
-            let consumed = pending.len() - slice.len();
-            pending.drain(..consumed);
-        }
+        drive(&mut p, capacity_for(chunks), chunks).unwrap();
     }
     h.flush();
     h.events
@@ -201,21 +206,27 @@ fn long_unterminated_header_line_is_rejected_early() {
     let mut h = Log::default();
     let mut p = MimeParser::new(&mut h);
     let long = vec![b'a'; 5000];
-    let mut slice = long.as_slice();
-    assert!(p.receive(&mut slice).is_err(), "no need to wait for a newline");
+    let mut ring = LoopBuf::with_capacity(8192);
+    ring.extend_from_slice(&long);
+    assert!(p.receive(&mut ring).is_err(), "no need to wait for a newline");
 }
 
 #[test]
 fn body_without_newlines_is_consumed_not_buffered() {
     let mut h = Log::default();
     let mut p = MimeParser::new(&mut h);
-    let mut head: &[u8] = b"Content-Type: text/plain\r\n\r\n";
-    p.receive(&mut head).unwrap();
+    let mut ring = LoopBuf::with_capacity(1024);
+    ring.extend_from_slice(b"Content-Type: text/plain\r\n\r\n");
+    p.receive(&mut ring).unwrap();
+    assert!(ring.is_empty());
+    // a megabyte through a ring of a kilobyte, which never holds any of it back
     let blob = vec![b'x'; 1_000_000];
-    let mut slice = blob.as_slice();
-    p.receive(&mut slice).unwrap();
-    assert!(slice.is_empty(), "the parser consumed the whole run");
-    p.close().unwrap();
+    for chunk in blob.chunks(1000) {
+        ring.extend_from_slice(chunk);
+        p.receive(&mut ring).unwrap();
+        assert!(ring.is_empty(), "the parser consumed the whole run");
+    }
+    p.close(&mut ring).unwrap();
     h.flush();
     assert_eq!(bodies(&h.events).len(), 1);
 }
@@ -223,22 +234,10 @@ fn body_without_newlines_is_consumed_not_buffered() {
 /// Like `run`, but a parse error is a result rather than a panic.
 fn run_result(chunks: &[&[u8]]) -> (Vec<String>, bool) {
     let mut h = Log::default();
-    let mut failed = false;
-    {
+    let failed = {
         let mut p = MimeParser::new(&mut h);
-        let mut pending: Vec<u8> = Vec::new();
-        'feed: for (n, chunk) in chunks.iter().enumerate() {
-            pending.extend_from_slice(chunk);
-            let mut slice = pending.as_slice();
-            let r = if n + 1 == chunks.len() { p.finish(&mut slice) } else { p.receive(&mut slice) };
-            if r.is_err() {
-                failed = true;
-                break 'feed;
-            }
-            let consumed = pending.len() - slice.len();
-            pending.drain(..consumed);
-        }
-    }
+        drive(&mut p, capacity_for(chunks), chunks).is_err()
+    };
     h.flush();
     (h.events, failed)
 }
@@ -281,5 +280,41 @@ fn random_multipart_bodies_are_chunk_invariant() {
         }
         let ones: Vec<&[u8]> = raw.chunks(1).collect();
         assert_eq!(run_result(&ones), expected, "round {round} one byte at a time");
+    }
+}
+
+/// Feeds `raw` a few bytes at a time into a ring only just bigger than the
+/// longest line, so the ring wraps all the time and header lines, boundary
+/// lines and encoded lines straddle its seam.
+fn run_wrapping(raw: &[u8], capacity: usize, step: usize) -> Vec<String> {
+    let mut h = Log::default();
+    {
+        let mut p = MimeParser::new(&mut h);
+        let mut ring = LoopBuf::with_capacity(capacity);
+        let mut rest = raw;
+        while !rest.is_empty() {
+            let n = ring.extend_from_slice(&rest[..rest.len().min(step)]);
+            assert!(n > 0, "the ring is full and the parser is not consuming");
+            rest = &rest[n..];
+            p.receive(&mut ring).unwrap();
+        }
+        p.close(&mut ring).unwrap();
+    }
+    h.flush();
+    h.events
+}
+
+#[test]
+fn a_ring_that_wraps_all_the_time_gives_the_same_events() {
+    let raw = b"Content-Type: multipart/mixed;\r\n boundary=\"XX\"\r\nSubject: a folded\r\n header value\r\n\r\n\
+preamble\r\n--XX\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n\
+soft=\r\nbreak and =3D sign\r\n--not a boundary\r\n--XX\r\nContent-Type: application/octet-stream\r\n\
+Content-Transfer-Encoding: base64\r\n\r\nQUJDREVGR0hJSktMTU5PUA==\r\n--XX\r\n\r\nplain part\r\n--XX--\r\nepilogue\r\n";
+    let expected = whole(raw);
+    // The longest line is 77 bytes; every capacity from there is a different wrap.
+    for capacity in [80usize, 81, 90, 97, 128, 250] {
+        for step in [1usize, 2, 3, 7, 13, 29] {
+            assert_eq!(run_wrapping(raw, capacity, step), expected, "capacity {capacity}, step {step}");
+        }
     }
 }

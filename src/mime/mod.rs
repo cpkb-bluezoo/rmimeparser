@@ -6,6 +6,7 @@ pub mod encoders;
 pub mod error;
 pub mod folding;
 pub mod handler;
+pub mod limits;
 pub mod messages;
 pub mod parameter;
 pub mod parser;
@@ -28,11 +29,10 @@ pub use encoders::{
     encode_base64, encode_quoted_printable, encode_uuencode, Base64Encoder,
     QuotedPrintableEncoder, UuencodeEncoder,
 };
-pub use error::{
-    HeaderLineTooLongError, HeaderValueTooLongError, MimeParseError, ParseResult,
-};
+pub use error::{ParseError, ParseResult};
 pub use folding::{write_folded_header, HARD_LINE_LIMIT, SOFT_LINE_LIMIT};
-pub use handler::{DefaultHandler, Handler, Locator, MimeHandler, MimeLocator, ParserLocator};
+pub use handler::{DefaultHandler, Handler, Locator, MimeHandler};
+pub use limits::ParserLimits;
 pub use parser::{check_boundary, BoundaryMatch, MessageHeaderState, MimeParser};
 pub use messages::MIMEMessages;
 pub use parameter::Parameter;
@@ -44,7 +44,6 @@ pub use write_error::{MimeWriteError, WriteResult};
 pub use writer::MimeWriter;
 
 // Gumdrop-style aliases
-pub type ParseError = MimeParseError;
 pub type ContentID = ContentId;
 pub type ContentIDParser = ContentIdParser;
 pub type MIMEVersion = MimeVersion;

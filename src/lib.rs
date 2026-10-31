@@ -16,10 +16,9 @@ pub use dkim::{DkimMessageParser, RawHeader};
 pub use mime::{
     Base64Decoder, Base64Encoder, ContentDisposition, ContentDispositionParser, ContentId,
     ContentIdParser, ContentType, ContentTypeParser, DefaultHandler, Handler,
-    HeaderLineTooLongError, HeaderValueTooLongError, Locator, MIMEMessages, MimeHandler,
-    MimeLocator, MimeParseError, MimeParser, MimeVersion, MimeWriteError, MimeWriter, Parameter,
-    ParseError, ParseResult, QuotedPrintableDecoder, QuotedPrintableEncoder, MIMEUtils,
-    ParserLocator, WriteResult, decode_base64, decode_header_bytes, decode_quoted_printable,
+    Locator, MIMEMessages, MimeHandler, MimeParser, MimeVersion, MimeWriteError, MimeWriter,
+    Parameter, ParseError, ParseResult, ParserLimits, QuotedPrintableDecoder,
+    QuotedPrintableEncoder, MIMEUtils, WriteResult, decode_base64, decode_header_bytes, decode_quoted_printable,
     decode_slice, decode_token_header_value, decode_uuencode, encode_base64,
     encode_quoted_printable, encode_uuencode, estimate_base64_decoded_size,
     estimate_qp_decoded_size, estimate_uuencode_decoded_size, index_of, is_special, is_token,

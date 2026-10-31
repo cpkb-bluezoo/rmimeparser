@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::sync::OnceLock;
 
+use loopbuf::LoopBuf;
 use rmimeparser::{MessageHandler, MessageParser, MimeHandler};
 
 const CORPUS_REPO: &str = "https://github.com/rspamd/rspamd-test-corpus.git";
@@ -34,6 +35,13 @@ const CORPUS_REPO: &str = "https://github.com/rspamd/rspamd-test-corpus.git";
 const EXPECTED_ERRORS_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/expected_errors");
 
 static EXPECTED_ERRORS: OnceLock<HashMap<String, String>> = OnceLock::new();
+
+/// A ring holding `bytes`, with room to spare.
+fn ring(bytes: &[u8]) -> LoopBuf {
+    let mut buf = LoopBuf::with_capacity(bytes.len() + 2048);
+    buf.extend_from_slice(bytes);
+    buf
+}
 
 fn expected_errors() -> &'static HashMap<String, String> {
     EXPECTED_ERRORS.get_or_init(load_expected_errors)
@@ -128,9 +136,9 @@ fn run_one(path: &Path, rel: &str) -> Outcome {
 fn parse_message(raw: &[u8]) -> Result<(), String> {
     let mut handler = Sink;
     let mut parser = MessageParser::new(&mut handler);
-    let mut input = raw;
+    let mut input = ring(raw);
     parser.receive(&mut input).map_err(|e| e.to_string())?;
-    parser.close().map_err(|e| e.to_string())?;
+    parser.close(&mut input).map_err(|e| e.to_string())?;
     Ok(())
 }
 

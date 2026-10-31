@@ -1,3 +1,4 @@
+use loopbuf::LoopBuf;
 use rmimeparser::{DkimMessageParser, MessageHandler, MimeHandler, RawHeader};
 
 struct CaptureHandler;
@@ -6,12 +7,19 @@ impl MimeHandler for CaptureHandler {}
 
 impl MessageHandler for CaptureHandler {}
 
+/// A ring holding `bytes`, with room to spare.
+fn ring(bytes: &[u8]) -> LoopBuf {
+    let mut buf = LoopBuf::with_capacity(bytes.len() + 2048);
+    buf.extend_from_slice(bytes);
+    buf
+}
+
 fn parse_message(raw: &[u8]) -> (Vec<RawHeader>, Vec<u8>) {
     let mut handler = CaptureHandler;
     let mut parser = DkimMessageParser::new(&mut handler);
-    let mut input: &[u8] = raw;
+    let mut input = ring(raw);
     parser.receive(&mut input).unwrap();
-    parser.close().unwrap();
+    parser.close(&mut input).unwrap();
     (
         parser.raw_headers().to_vec(),
         parser.raw_body().to_vec(),
@@ -91,9 +99,9 @@ fn test_dkim_message_parser_lookup_api() {
     let raw = b"From: a@example.com\r\nDKIM-Signature: v=1; a=rsa-sha256\r\n\r\nx\r\n";
     let mut handler = CaptureHandler;
     let mut parser = DkimMessageParser::new(&mut handler);
-    let mut input: &[u8] = raw;
+    let mut input = ring(raw);
     parser.receive(&mut input).unwrap();
-    parser.close().unwrap();
+    parser.close(&mut input).unwrap();
 
     assert!(parser.is_headers_complete());
     assert!(parser.raw_header("from").is_some());
@@ -126,9 +134,9 @@ fn test_body_sink_receives_chunks_matching_whole_buffer_and_raw_body_stays_empty
     let sunk2 = Rc::clone(&sunk);
     parser.set_body_sink(move |chunk: &[u8]| sunk2.borrow_mut().extend_from_slice(chunk));
 
-    let mut input: &[u8] = raw;
+    let mut input = ring(raw);
     parser.receive(&mut input).unwrap();
-    parser.close().unwrap();
+    parser.close(&mut input).unwrap();
 
     assert_eq!(*sunk.borrow(), b"Hello\r\nWorld\r\n".to_vec());
     assert!(
@@ -140,9 +148,7 @@ fn test_body_sink_receives_chunks_matching_whole_buffer_and_raw_body_stays_empty
 }
 
 /// Feeding the message in many tiny wire chunks (1-byte reads, the worst
-/// case) — carrying any unconsumed suffix forward per `receive`'s NIO
-/// compact-cursor contract, same as every other incremental consumer in
-/// this codebase — must still deliver every body byte to the sink exactly
+/// case), the ring keeping whatever the parser has not consumed — must still deliver every body byte to the sink exactly
 /// once, with no reordering or loss: the property a streaming DKIM hasher
 /// depends on.
 #[test]
@@ -159,16 +165,12 @@ fn test_body_sink_receives_all_bytes_regardless_of_wire_chunking() {
     parser.set_body_sink(move |chunk: &[u8]| sunk2.borrow_mut().extend_from_slice(chunk));
 
     let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
-    let mut carry: Vec<u8> = Vec::new();
-    let mut offset = 0;
-    while offset < raw.len() {
-        carry.extend_from_slice(&raw[offset..offset + 1]);
-        offset += 1;
-        let mut slice: &[u8] = carry.as_slice();
-        parser.receive(&mut slice).unwrap();
-        carry = slice.to_vec();
+    let mut ring = LoopBuf::with_capacity(2048);
+    for byte in raw {
+        ring.extend_from_slice(&[*byte]);
+        parser.receive(&mut ring).unwrap();
     }
-    parser.close().unwrap();
+    parser.close(&mut ring).unwrap();
 
     assert_eq!(*sunk.borrow(), raw[header_end..].to_vec());
 }
@@ -188,15 +190,15 @@ fn test_reset_drops_the_body_sink() {
     let sunk = Rc::new(RefCell::new(Vec::new()));
     let sunk2 = Rc::clone(&sunk);
     parser.set_body_sink(move |chunk: &[u8]| sunk2.borrow_mut().extend_from_slice(chunk));
-    let mut input: &[u8] = b"A: b\r\n\r\nfirst\r\n";
+    let mut input = ring(b"A: b\r\n\r\nfirst\r\n");
     parser.receive(&mut input).unwrap();
-    parser.close().unwrap();
+    parser.close(&mut input).unwrap();
     assert_eq!(*sunk.borrow(), b"first\r\n".to_vec());
 
     parser.reset();
-    let mut input: &[u8] = b"A: b\r\n\r\nsecond\r\n";
+    let mut input = ring(b"A: b\r\n\r\nsecond\r\n");
     parser.receive(&mut input).unwrap();
-    parser.close().unwrap();
+    parser.close(&mut input).unwrap();
 
     // Sink was dropped by reset(), so no further calls happened...
     assert_eq!(*sunk.borrow(), b"first\r\n".to_vec());
@@ -204,48 +206,33 @@ fn test_reset_drops_the_body_sink() {
     assert_eq!(parser.raw_body(), b"second\r\n");
 }
 
-/// Stored mail often ends without a final line terminator; `finish` accepts
-/// an unterminated closing boundary where `receive` + `close` cannot.
+/// Stored mail often ends without a final line terminator; `close` accepts
+/// an unterminated closing boundary, whatever the chunking.
 #[test]
-fn test_finish_accepts_unterminated_closing_boundary() {
+fn test_close_accepts_unterminated_closing_boundary() {
     let raw = b"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\nbody\r\n--b--";
-
-    let mut handler = CaptureHandler;
-    let mut parser = DkimMessageParser::new(&mut handler);
-    let mut input: &[u8] = raw;
-    parser.receive(&mut input).unwrap();
-    assert!(parser.close().is_err(), "close alone cannot see the closing boundary");
 
     for step in [1usize, 7, raw.len()] {
         let mut handler = CaptureHandler;
         let mut parser = DkimMessageParser::new(&mut handler);
-        let mut pending: Vec<u8> = Vec::new();
-        let mut offset = 0;
-        while offset < raw.len() {
-            let end = (offset + step).min(raw.len());
-            pending.extend_from_slice(&raw[offset..end]);
-            offset = end;
-            let mut slice = pending.as_slice();
-            if offset == raw.len() {
-                parser.finish(&mut slice).unwrap();
-            } else {
-                parser.receive(&mut slice).unwrap();
-            }
-            let consumed = pending.len() - slice.len();
-            pending.drain(..consumed);
+        let mut ring = LoopBuf::with_capacity(2048);
+        for chunk in raw.chunks(step) {
+            ring.extend_from_slice(chunk);
+            parser.receive(&mut ring).unwrap();
         }
+        parser.close(&mut ring).unwrap();
         assert_eq!(parser.raw_body(), b"--b\r\nbody\r\n--b--", "step {step}");
         assert_eq!(parser.raw_headers().len(), 1);
     }
 }
 
 #[test]
-fn test_finish_keeps_final_header_line_without_terminator() {
+fn test_close_keeps_final_header_line_without_terminator() {
     let raw = b"Subject: hello\r\nX-Last: no terminator";
     let mut handler = CaptureHandler;
     let mut parser = DkimMessageParser::new(&mut handler);
-    let mut input: &[u8] = raw;
-    parser.finish(&mut input).unwrap();
+    let mut input = ring(raw);
+    parser.close(&mut input).unwrap();
     assert_eq!(parser.raw_headers().len(), 2);
     assert_eq!(parser.raw_headers()[1].bytes(), b"X-Last: no terminator");
 }

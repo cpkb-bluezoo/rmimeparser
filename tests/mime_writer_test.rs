@@ -1,3 +1,4 @@
+use loopbuf::LoopBuf;
 use rmimeparser::{
     ContentType, ContentTypeParser, MimeHandler, MimeParser, MimeVersion, MimeWriter, Parameter,
     ParseResult,
@@ -49,13 +50,20 @@ impl MimeHandler for CollectBody {
     }
 }
 
+/// A ring holding `bytes`, with room to spare.
+fn ring(bytes: &[u8]) -> LoopBuf {
+    let mut buf = LoopBuf::with_capacity(bytes.len() + 2048);
+    buf.extend_from_slice(bytes);
+    buf
+}
+
 fn parse_all(raw: &[u8]) -> CollectBody {
     let mut handler = CollectBody::new();
     {
         let mut parser = MimeParser::new(&mut handler);
-        let mut input = raw;
+        let mut input = ring(raw);
         parser.receive(&mut input).unwrap();
-        parser.close().unwrap();
+        parser.close(&mut input).unwrap();
     }
     handler
 }
