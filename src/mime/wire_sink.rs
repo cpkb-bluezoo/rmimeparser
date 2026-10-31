@@ -14,6 +14,15 @@ pub trait MimeWireSink {
     /// header only when it does.
     const CAPTURES: bool = true;
 
+    /// Asked once for each header, as soon as its name is known. Only a header
+    /// this says yes to has its raw bytes accumulated and delivered to
+    /// [`Self::raw_header`]; for any other, nothing is copied or held. DKIM
+    /// needs only the handful of headers a signature covers, not every
+    /// `Received` and `X-` header of the message.
+    fn wants_header(&mut self, _name: &str) -> bool {
+        true
+    }
+
     fn raw_header(&mut self, name: &str, raw_bytes: &[u8]) -> ParseResult<()>;
 
     fn raw_body_content(&mut self, content: &[u8]) -> ParseResult<()>;

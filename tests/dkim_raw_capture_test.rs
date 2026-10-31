@@ -236,3 +236,128 @@ fn test_close_keeps_final_header_line_without_terminator() {
     assert_eq!(parser.raw_headers().len(), 2);
     assert_eq!(parser.raw_headers()[1].bytes(), b"X-Last: no terminator");
 }
+
+// ---- capturing only the headers a signature covers ----
+
+fn big_message() -> Vec<u8> {
+    let mut m =
+        b"DKIM-Signature: v=1; a=rsa-sha256; h=from:Subject; d=example.org;\r\n b=abc\r\n".to_vec();
+    m.extend_from_slice(b"Received: from a.example\r\n by b.example\r\n");
+    m.extend_from_slice(b"FROM: alice@example.org\r\n");
+    m.extend_from_slice(b"X-Big: ");
+    m.extend_from_slice(&[b'x'; 500]);
+    m.extend_from_slice(b"\r\n");
+    m.extend_from_slice(b"Subject: hello\r\n world\r\n");
+    m.extend_from_slice(b"\r\nBody\r\n");
+    m
+}
+
+fn feed(parser: &mut DkimMessageParser<&mut CaptureHandler>, message: &[u8], step: usize) {
+    let mut ring = LoopBuf::with_capacity(4096);
+    for chunk in message.chunks(step) {
+        ring.extend_from_slice(chunk);
+        parser.receive(&mut ring).unwrap();
+    }
+    parser.close(&mut ring).unwrap();
+}
+
+#[test]
+fn capture_only_keeps_just_the_named_headers_and_nothing_else_is_held() {
+    let message = big_message();
+    for step in [1usize, 7, 4000] {
+        let mut handler = CaptureHandler;
+        let mut parser = DkimMessageParser::new(&mut handler);
+        parser.capture_only(["from", "dkim-signature"]);
+        feed(&mut parser, &message, step);
+        let names: Vec<&str> = parser.raw_headers().iter().map(|h| h.name()).collect();
+        assert_eq!(names, ["DKIM-Signature", "FROM"], "step {step}");
+        assert_eq!(
+            parser.header_bytes("from").unwrap(),
+            b"FROM: alice@example.org\r\n"
+        );
+        // the folded signature keeps its fold
+        assert!(parser
+            .header_bytes("dkim-signature")
+            .unwrap()
+            .ends_with(b"\r\n b=abc\r\n"));
+        // and the body is untouched
+        assert_eq!(parser.raw_body(), b"Body\r\n");
+    }
+}
+
+#[test]
+fn a_header_that_is_not_captured_does_not_count_against_the_capture_limit() {
+    let message = big_message();
+    // X-Big is over 500 bytes: with a limit of 200, capturing it is an error
+    let mut handler = CaptureHandler;
+    let mut parser = DkimMessageParser::new(&mut handler);
+    parser.limits_mut().max_captured_header_size = Some(200);
+    let mut ring = LoopBuf::with_capacity(4096);
+    ring.extend_from_slice(&message);
+    let err = parser.receive(&mut ring).unwrap_err();
+    assert!(err.message().contains("maximum"), "{err}");
+
+    // but when it is not wanted, it is never accumulated
+    let mut handler = CaptureHandler;
+    let mut parser = DkimMessageParser::new(&mut handler);
+    parser.limits_mut().max_captured_header_size = Some(200);
+    parser.capture_only(["from", "subject"]);
+    feed(&mut parser, &message, 100);
+    assert_eq!(parser.raw_headers().len(), 2);
+}
+
+/// A verifier learns what to capture from the signature, which sits above the
+/// headers it covers.
+#[test]
+fn a_signature_can_widen_what_is_captured_before_the_headers_it_covers_arrive() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let message = big_message();
+    // the whole message in one go is the hard case: every header is read in
+    // one call to receive, so there is no chance to widen between calls
+    for step in [1usize, 5, 4000] {
+        let wanted = Rc::new(RefCell::new(vec!["dkim-signature".to_string()]));
+        let mut handler = CaptureHandler;
+        let mut parser = DkimMessageParser::new(&mut handler);
+        let for_filter = Rc::clone(&wanted);
+        parser.set_header_filter(move |name| {
+            for_filter
+                .borrow()
+                .iter()
+                .any(|w| name.eq_ignore_ascii_case(w))
+        });
+        let for_callback = Rc::clone(&wanted);
+        parser.set_header_callback(move |header| {
+            if header.name().eq_ignore_ascii_case("dkim-signature") {
+                let text = String::from_utf8_lossy(&header.bytes_unfolded()).to_string();
+                let h = text
+                    .split(';')
+                    .find_map(|tag| tag.trim().strip_prefix("h="))
+                    .unwrap_or("");
+                for name in h.split(':') {
+                    for_callback
+                        .borrow_mut()
+                        .push(name.trim().to_ascii_lowercase());
+                }
+            }
+        });
+        feed(&mut parser, &message, step);
+        let names: Vec<&str> = parser.raw_headers().iter().map(|h| h.name()).collect();
+        assert_eq!(names, ["DKIM-Signature", "FROM", "Subject"], "step {step}");
+    }
+}
+
+#[test]
+fn without_a_filter_every_header_is_captured_and_reset_drops_the_filter() {
+    let message = big_message();
+    let mut handler = CaptureHandler;
+    let mut parser = DkimMessageParser::new(&mut handler);
+    parser.capture_only(["from"]);
+    feed(&mut parser, &message, 4000);
+    assert_eq!(parser.raw_headers().len(), 1);
+
+    parser.reset();
+    feed(&mut parser, &message, 4000);
+    assert_eq!(parser.raw_headers().len(), 5, "every header again");
+}

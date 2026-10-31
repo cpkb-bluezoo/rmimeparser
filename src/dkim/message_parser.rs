@@ -161,6 +161,49 @@ impl<H: MessageHandler> DkimMessageParser<H> {
         self.mime.wire_mut().set_body_sink(Box::new(sink));
     }
 
+    /// Capture only the headers whose names are in `names` (compared without
+    /// regard to case). A DKIM signature covers a handful of headers, and the
+    /// rest need not be copied or held at all: a header not named is never
+    /// accumulated, whatever its size, and does not count against
+    /// [`ParserLimits::max_captured_header_size`].
+    ///
+    /// Call this before feeding the message. To also capture whatever a
+    /// signature's `h=` lists, which is known only once its header has been
+    /// read, use [`Self::set_header_filter`] with
+    /// [`Self::set_header_callback`].
+    pub fn capture_only<I, S>(&mut self, names: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let names: Vec<String> = names
+            .into_iter()
+            .map(|n| n.as_ref().to_ascii_lowercase())
+            .collect();
+        self.set_header_filter(move |name| names.iter().any(|n| name.eq_ignore_ascii_case(n)));
+    }
+
+    /// Capture only the headers `filter` says yes to. It is asked once for each
+    /// header, as soon as its name is known, and may change its answer from one
+    /// header to the next. The parser is used from one thread, so state shared
+    /// with [`Self::set_header_callback`] can be an `Rc<RefCell<_>>`.
+    ///
+    /// Call this before feeding the message. [`Self::reset`] drops it, like the
+    /// body sink.
+    pub fn set_header_filter(&mut self, filter: impl FnMut(&str) -> bool + 'static) {
+        self.mime.wire_mut().set_header_filter(Box::new(filter));
+    }
+
+    /// Call `callback` with each captured header as soon as it is complete, so
+    /// a verifier can read a `DKIM-Signature`'s `h=` and widen what its filter
+    /// accepts before the headers it covers arrive: a signature always sits
+    /// above the headers it signs.
+    ///
+    /// Call this before feeding the message. [`Self::reset`] drops it.
+    pub fn set_header_callback(&mut self, callback: impl FnMut(&RawHeader) + 'static) {
+        self.mime.wire_mut().set_header_callback(Box::new(callback));
+    }
+
     pub fn is_headers_complete(&self) -> bool {
         self.mime.wire().is_headers_complete()
     }

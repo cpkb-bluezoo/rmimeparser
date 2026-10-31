@@ -213,6 +213,8 @@ pub struct MimeParser<H: MimeHandler, W: MimeWireSink = NoWire> {
     header_value_sink: Vec<u8>,
     header_raw_name: Option<String>,
     header_raw_sink: Vec<u8>,
+    /// The sink wants the raw bytes of the header being read.
+    capturing: bool,
     strip_header_whitespace: bool,
     decode_buffer: Vec<u8>,
     transfer_encoding: TransferEncoding,
@@ -275,6 +277,7 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             header_value_sink: Vec::with_capacity(INITIAL_HEADER_VALUE_CAPACITY),
             header_raw_name: None,
             header_raw_sink: Vec::new(),
+            capturing: false,
             strip_header_whitespace: true,
             decode_buffer: Vec::new(),
             transfer_encoding: TransferEncoding::Binary,
@@ -537,6 +540,7 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         self.header_value_sink.clear();
         self.header_raw_name = None;
         self.header_raw_sink.clear();
+        self.capturing = false;
         self.decode_buffer.clear();
         self.clear_body_state();
         self.transfer_encoding = TransferEncoding::Binary;
@@ -634,7 +638,7 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
                     &*self.locator,
                 ));
             }
-            if capture {
+            if self.capturing {
                 self.check_captured_size(self.header_raw_sink.len(), line.len())?;
                 self.header_raw_sink.extend_from_slice(line);
             }
@@ -645,12 +649,6 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             self.flush_raw_header()?;
         }
         self.flush_header()?;
-
-        if capture {
-            self.header_raw_name = extract_raw_header_name(line, start, end);
-            self.check_captured_size(self.header_raw_sink.len(), line.len())?;
-            self.header_raw_sink.extend_from_slice(line);
-        }
 
         let colon_pos = index_of(&line[start..end], b':').map(|i| start + i);
         let Some(colon_pos) = colon_pos else {
@@ -697,6 +695,15 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         self.header_name
             .extend(line[start..name_end].iter().map(|&b| b as char));
         self.header_active = true;
+
+        // The sink says, from the name, whether it wants the header's bytes
+        self.capturing = capture && self.wire.wants_header(&self.header_name);
+        if self.capturing {
+            self.header_raw_name = Some(self.header_name.clone());
+            self.check_captured_size(self.header_raw_sink.len(), line.len())?;
+            self.header_raw_sink.extend_from_slice(line);
+        }
+
         self.start_value()?;
 
         self.feed_value(&line[colon_pos + 1..end])
@@ -1476,29 +1483,6 @@ fn is_understood_header(name: &str) -> bool {
 
 fn is_header_whitespace(b: u8) -> bool {
     b == b' ' || b == b'\t'
-}
-
-fn extract_raw_header_name(line: &[u8], start: usize, end: usize) -> Option<String> {
-    let slice = &line[start..end];
-    let colon = slice.iter().position(|&b| b == b':')?;
-    let name = trim_ascii_ws_bytes(&slice[..colon]);
-    if name.is_empty() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(name).into_owned())
-}
-
-fn trim_ascii_ws_bytes(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|b| *b != b' ' && *b != b'\t')
-        .unwrap_or(bytes.len());
-    let end = bytes
-        .iter()
-        .rposition(|b| *b != b' ' && *b != b'\t')
-        .map(|i| i + 1)
-        .unwrap_or(start);
-    &bytes[start..end]
 }
 
 fn strip_line_ending(line: &[u8]) -> (usize, usize) {

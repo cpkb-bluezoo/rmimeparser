@@ -9,12 +9,22 @@ use super::raw_header::RawHeader;
 /// order — see [`RawCapture::set_body_sink`].
 type BodySink = Box<dyn FnMut(&[u8])>;
 
+/// Says from a header's name whether to capture it — see
+/// [`RawCapture::set_header_filter`].
+type HeaderFilter = Box<dyn FnMut(&str) -> bool>;
+
+/// Told of each header as it is captured — see
+/// [`RawCapture::set_header_callback`].
+type HeaderCallback = Box<dyn FnMut(&RawHeader)>;
+
 #[derive(Default)]
 pub struct RawCapture {
     raw_headers: Vec<RawHeader>,
     raw_body: Vec<u8>,
     headers_complete: bool,
     body_sink: Option<BodySink>,
+    header_filter: Option<HeaderFilter>,
+    header_callback: Option<HeaderCallback>,
 }
 
 impl std::fmt::Debug for RawCapture {
@@ -24,6 +34,7 @@ impl std::fmt::Debug for RawCapture {
             .field("raw_body_len", &self.raw_body.len())
             .field("headers_complete", &self.headers_complete)
             .field("body_sink", &self.body_sink.is_some())
+            .field("header_filter", &self.header_filter.is_some())
             .finish()
     }
 }
@@ -32,6 +43,25 @@ impl RawCapture {
     pub fn add_raw_header(&mut self, name: &str, bytes: &[u8]) {
         self.raw_headers
             .push(RawHeader::new(name.to_string(), bytes.to_vec()));
+        if let (Some(callback), Some(header)) =
+            (self.header_callback.as_mut(), self.raw_headers.last())
+        {
+            callback(header);
+        }
+    }
+
+    /// Capture only the headers `filter` says yes to, asked once per header
+    /// with its name as soon as that is known. The others are never copied or
+    /// held. With no filter every header is captured.
+    pub fn set_header_filter(&mut self, filter: HeaderFilter) {
+        self.header_filter = Some(filter);
+    }
+
+    /// Call `callback` with each header as soon as it has been captured. The
+    /// way to widen a filter once a header (a `DKIM-Signature`) says which
+    /// others are wanted.
+    pub fn set_header_callback(&mut self, callback: HeaderCallback) {
+        self.header_callback = Some(callback);
     }
 
     /// Stream body bytes to `sink` as they arrive instead of retaining them
@@ -99,10 +129,19 @@ impl RawCapture {
         self.raw_body.clear();
         self.headers_complete = false;
         self.body_sink = None;
+        self.header_filter = None;
+        self.header_callback = None;
     }
 }
 
 impl MimeWireSink for RawCapture {
+    fn wants_header(&mut self, name: &str) -> bool {
+        match self.header_filter.as_mut() {
+            Some(filter) => filter(name),
+            None => true,
+        }
+    }
+
     fn raw_header(&mut self, name: &str, raw_bytes: &[u8]) -> ParseResult<()> {
         self.add_raw_header(name, raw_bytes);
         Ok(())

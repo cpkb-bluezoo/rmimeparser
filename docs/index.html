@@ -599,6 +599,32 @@ parser.close(&amp;mut ring)?;
 let headers = parser.raw_headers();      // &[RawHeader], folds preserved
 let body = parser.raw_body();            // undecoded body lines
 let from = parser.raw_header("from");    // Option&lt;&amp;RawHeader&gt;</code></pre>
+        <h3>Capturing only the headers a signature covers</h3>
+        <p>
+          By default every header is captured, which means copying and holding every
+          <code>Received</code> and <code>X-</code> header only to ignore it. A signature covers a handful.
+          Say which, and the rest are never copied or held, whatever their size, and do not count
+          against <code>max_captured_header_size</code>:
+        </p>
+<pre><code>parser.capture_only(["from", "subject", "dkim-signature"]);   // case-insensitive</code></pre>
+        <p>
+          A verifier does not know the list until it has read the signature, whose <code>h=</code> tag
+          names the headers it covers. A signature always sits above those headers, so it can widen the
+          filter in time. <code>set_header_callback</code> is called as each captured header completes,
+          before the next header's name is asked about, even when the whole message arrives in one call
+          to <code>receive</code>:
+        </p>
+<pre><code>let wanted = Rc::new(RefCell::new(vec!["dkim-signature".to_string()]));
+let filter = Rc::clone(&amp;wanted);
+parser.set_header_filter(move |name| {
+    filter.borrow().iter().any(|w| name.eq_ignore_ascii_case(w))
+});
+let widen = Rc::clone(&amp;wanted);
+parser.set_header_callback(move |header| {
+    if header.name().eq_ignore_ascii_case("dkim-signature") {
+        // read h= from header.bytes_unfolded() and push each name onto `widen`
+    }
+});</code></pre>
         <div class="note">
           Everyday apps should keep using <code>MessageParser</code>. Reach for
           <code>DkimMessageParser</code> only when you need canonicalization input.
