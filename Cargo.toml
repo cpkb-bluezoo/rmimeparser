@@ -1,6 +1,6 @@
 [package]
 name = "rmimeparser"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.70"
 description = "Push-based MIME and RFC 5322 message parser and writer (gumdrop-style)"
@@ -12,7 +12,7 @@ categories = ["email", "parser-implementations"]
 
 [dependencies]
 # `path` until a loopbuf release includes what this crate uses.
-loopbuf = { version = "0.1", path = "../loopbuf" }
+loopbuf = { version = "0.2", path = "../loopbuf" }
 
 [lib]
 name = "rmimeparser"
