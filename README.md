@@ -105,9 +105,27 @@ parser.close(&mut ring)?;
 
 The two layers are separate. `MimeParser` and `MimeHandler` know nothing of RFC 5322, so something that only needs MIME (HTTP's `multipart/form-data`) can use them alone. `MessageParser` and `MessageHandler` extend them for mail: addresses, dates and message-ids.
 
-`MimeParser` parses five headers itself and gives the handler typed events: `Content-Type`, `Content-Disposition`, `Content-Transfer-Encoding`, `Content-ID` and `MIME-Version`. **Every other header is unstructured**, known or not, and arrives as `start_header(name)`, any number of `header_content(&str)` pieces and `end_header()`. The pieces are unfolded, trimmed, RFC 2047 encoded words decoded, and raw 8-bit text read as UTF-8 where it is valid and as windows-1252 where it is not (ISO-8859-1 with `set_utf8_headers(true)`). The parser holds none of the value, so a header of any size passes through; a bounded amount (an encoded word, some white space, a UTF-8 sequence) is held across pieces, and a piece has no particular size. `HeaderTextDecoder` is the same decoder on its own.
+`MimeParser` parses five headers itself: `Content-Type`, `Content-Disposition`, `Content-Transfer-Encoding`, `Content-ID` and `MIME-Version`. **Every other header is unstructured**, known or not, and arrives as `start_header(name)`, any number of `header_content(&str)` pieces and `end_header()`. The pieces are unfolded, trimmed, RFC 2047 encoded words decoded, and raw 8-bit text read as UTF-8 where it is valid and as windows-1252 where it is not (ISO-8859-1 with `set_utf8_headers(true)`). The parser holds none of the value, so a header of any size passes through; a bounded amount (an encoded word, some white space, a UTF-8 sequence) is held across pieces, and a piece has no particular size. `HeaderTextDecoder` is the same decoder on its own.
 
-A layer that parses some headers itself says so with `MimeHandler::header_delivery(name)`, asked once for each header the parser does not understand. Answering `HeaderDelivery::Raw` has the value arrive as `raw_header_content(&[u8])` instead: undecoded, with only the folds removed. That is how `MessageParser` takes dates, address lists and message-ids, which it has to read as tokens: decoding an encoded word first could put a `<` or a `,` into the structure. A header taken raw is held by whoever takes it, so `ParserLimits::max_header_value_size` applies to it, as it does to the five headers the parser holds whole; it does not apply to unstructured headers. The header name has to arrive whole and is limited to `max_header_name_length` (1024).
+A layer that parses some headers itself says so with `MimeHandler::header_delivery(name)`, asked once for each header the parser does not understand. Answering `HeaderDelivery::Raw` has the value arrive as `raw_header_content(&[u8])` instead: undecoded, with only the folds removed. That is how `MessageParser` takes dates, address lists and message-ids, which it has to read as tokens: decoding an encoded word first could put a `<` or a `,` into the structure. A header taken raw is held by whoever takes it, so `ParserLimits::max_header_value_size` applies to it, as it does to the three of those five that the parser holds whole (`Content-Transfer-Encoding`, `Content-ID`, `MIME-Version`); it does not apply to unstructured headers, `Content-Type` or `Content-Disposition`. The header name has to arrive whole and is limited to `max_header_name_length` (1024).
+
+### Content-Type and Content-Disposition
+
+These two stream too, as events, so a parameter value of any size passes through and nothing is held but the head:
+
+```text
+start_content_type(primary, sub)      start_content_disposition(kind)
+  start_parameter(name, language)       ...
+    parameter_content(text)*
+  end_parameter()
+end_content_type()                    end_content_disposition()
+```
+
+A parameter value arrives decoded: quoted-pairs resolved, RFC 2047 encoded words decoded, and an RFC 2231 extended value (`name*=UTF-8''%C3%A9`) percent-decoded and read in its charset. RFC 2231 continuations (`name*0*=...; name*1*=...`) are joined into one parameter, named without the `*0`; segments have to arrive in order from 0, and one that does not is dropped. `language` is `Some` for an extended value, so a handler can prefer `filename*` to `filename` (the same name can come twice; which to keep is the handler's policy). A parameter the grammar cannot use is skipped and the next is read.
+
+If the head is not `type/subtype` (or the disposition type is not a token), `malformed_header(name, reason)` stands in for `start_header` and the whole value follows as unstructured text, so a handler that wants the value as a string can have it.
+
+The parser picks the `boundary` out of a multipart `Content-Type` itself as it goes by. A handler that wants a `ContentType` or `ContentDisposition` object puts the events through `ContentTypeCollector` or `ContentDispositionCollector` (first parameter of a name wins; an extended value replaces a plain one), and `ContentTypeParser::parse` / `ContentDispositionParser::parse` give one for a value held whole, by running the same grammar.
 
 ### Streaming
 

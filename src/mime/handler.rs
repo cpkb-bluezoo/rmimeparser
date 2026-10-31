@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::mime::content_types::{ContentDisposition, ContentId, ContentType, MimeVersion};
+use crate::mime::content_types::{ContentId, MimeVersion};
 use crate::mime::error::ParseResult;
 
 /// Where the parser is in the message.
@@ -138,11 +138,66 @@ pub trait MimeHandler {
         Ok(())
     }
 
-    fn content_type(&mut self, _content_type: &ContentType) -> ParseResult<()> {
+    /// A `Content-Type` header: its type and subtype. Its parameters follow as
+    /// [`Self::start_parameter`], [`Self::parameter_content`] and
+    /// [`Self::end_parameter`], and then [`Self::end_content_type`].
+    ///
+    /// A value that is not `type/subtype` is not reported here but through
+    /// [`Self::malformed_header`].
+    fn start_content_type(&mut self, _primary: &str, _sub: &str) -> ParseResult<()> {
         Ok(())
     }
 
-    fn content_disposition(&mut self, _disposition: &ContentDisposition) -> ParseResult<()> {
+    fn end_content_type(&mut self) -> ParseResult<()> {
+        Ok(())
+    }
+
+    /// A `Content-Disposition` header: its type (`attachment`, `form-data`, ...).
+    /// Its parameters follow as for [`Self::start_content_type`], and then
+    /// [`Self::end_content_disposition`].
+    fn start_content_disposition(&mut self, _kind: &str) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn end_content_disposition(&mut self) -> ParseResult<()> {
+        Ok(())
+    }
+
+    /// A parameter of the `Content-Type` or `Content-Disposition` being read.
+    /// Its value follows as [`Self::parameter_content`] pieces and then
+    /// [`Self::end_parameter`].
+    ///
+    /// `language` is `Some` for an RFC 2231 extended value (`name*=...`), where it
+    /// is the language tag, possibly empty. RFC 2231 continuations
+    /// (`name*0=...; name*1=...`) are joined: they are one parameter, named
+    /// without the `*0`. Segments have to arrive in order from 0; one that does
+    /// not is dropped.
+    ///
+    /// The same name can appear more than once, and a plain `filename` and an
+    /// extended `filename*` often do: which to prefer is up to the handler. (The
+    /// usual rule is that the first wins, except that an extended value
+    /// replaces a plain one.)
+    fn start_parameter(&mut self, _name: &str, _language: Option<&str>) -> ParseResult<()> {
+        Ok(())
+    }
+
+    /// A piece of a parameter's value, decoded: quoted-pairs resolved,
+    /// percent-encoding and RFC 2047 encoded words decoded, leading and
+    /// trailing white space removed. A piece has no particular size.
+    fn parameter_content(&mut self, _text: &str) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn end_parameter(&mut self) -> ParseResult<()> {
+        Ok(())
+    }
+
+    /// A header the parser would have parsed (`Content-Type` or
+    /// `Content-Disposition`) is not valid. It stands in for
+    /// [`Self::start_header`]: the whole value follows as unstructured text,
+    /// through [`Self::header_content`] and then [`Self::end_header`], as if it
+    /// were any other header. `reason` says what is wrong with it.
+    fn malformed_header(&mut self, _name: &str, _reason: &str) -> ParseResult<()> {
         Ok(())
     }
 
@@ -199,11 +254,29 @@ macro_rules! forward_handler {
             fn start_entity(&mut self, boundary: Option<&str>) -> ParseResult<()> {
                 (**self).start_entity(boundary)
             }
-            fn content_type(&mut self, content_type: &ContentType) -> ParseResult<()> {
-                (**self).content_type(content_type)
+            fn start_content_type(&mut self, primary: &str, sub: &str) -> ParseResult<()> {
+                (**self).start_content_type(primary, sub)
             }
-            fn content_disposition(&mut self, disposition: &ContentDisposition) -> ParseResult<()> {
-                (**self).content_disposition(disposition)
+            fn end_content_type(&mut self) -> ParseResult<()> {
+                (**self).end_content_type()
+            }
+            fn start_content_disposition(&mut self, kind: &str) -> ParseResult<()> {
+                (**self).start_content_disposition(kind)
+            }
+            fn end_content_disposition(&mut self) -> ParseResult<()> {
+                (**self).end_content_disposition()
+            }
+            fn start_parameter(&mut self, name: &str, language: Option<&str>) -> ParseResult<()> {
+                (**self).start_parameter(name, language)
+            }
+            fn parameter_content(&mut self, text: &str) -> ParseResult<()> {
+                (**self).parameter_content(text)
+            }
+            fn end_parameter(&mut self) -> ParseResult<()> {
+                (**self).end_parameter()
+            }
+            fn malformed_header(&mut self, name: &str, reason: &str) -> ParseResult<()> {
+                (**self).malformed_header(name, reason)
             }
             fn content_transfer_encoding(&mut self, encoding: &str) -> ParseResult<()> {
                 (**self).content_transfer_encoding(encoding)

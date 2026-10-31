@@ -2,9 +2,9 @@ use std::rc::Rc;
 
 use loopbuf::LoopBuf;
 use rmimeparser::{
-    decode_slice, index_of, ContentDisposition, ContentType, HeaderDelivery, Locator, MimeHandler,
-    MimeParser,
-    MimeVersion, ParseResult,
+    decode_slice, index_of, ContentDisposition, ContentDispositionCollector, ContentType,
+    ContentTypeCollector, HeaderDelivery, Locator, MimeHandler, MimeParser, MimeVersion,
+    ParseResult,
 };
 
 struct TestHandler {
@@ -17,6 +17,11 @@ struct TestHandler {
     entity_count: usize,
     /// Unstructured headers, as (name, value).
     headers: Vec<(String, String)>,
+    content_type_collector: ContentTypeCollector,
+    disposition_collector: ContentDispositionCollector,
+    /// (header name, reason, the text delivered after it)
+    malformed: Vec<(String, String, String)>,
+    in_malformed: bool,
 }
 
 impl TestHandler {
@@ -30,6 +35,10 @@ impl TestHandler {
             body: Vec::new(),
             entity_count: 0,
             headers: Vec::new(),
+            content_type_collector: Default::default(),
+            disposition_collector: Default::default(),
+            malformed: Vec::new(),
+            in_malformed: false,
         }
     }
 }
@@ -46,16 +55,52 @@ impl MimeHandler for TestHandler {
         Ok(())
     }
 
-    fn content_type(&mut self, content_type: &ContentType) -> ParseResult<()> {
-        self.events.push(format!("contentType:{content_type}"));
-        self.content_type = Some(content_type.clone());
+    fn start_content_type(&mut self, primary: &str, sub: &str) -> ParseResult<()> {
+        self.content_type_collector.start(primary, sub);
         Ok(())
     }
 
-    fn content_disposition(&mut self, disposition: &ContentDisposition) -> ParseResult<()> {
-        self.events
-            .push(format!("contentDisposition:{disposition}"));
-        self.content_disposition = Some(disposition.clone());
+    fn end_content_type(&mut self) -> ParseResult<()> {
+        let content_type = self.content_type_collector.finish();
+        self.events.push(format!("contentType:{content_type}"));
+        self.content_type = Some(content_type);
+        Ok(())
+    }
+
+    fn start_content_disposition(&mut self, kind: &str) -> ParseResult<()> {
+        self.disposition_collector.start(kind);
+        Ok(())
+    }
+
+    fn end_content_disposition(&mut self) -> ParseResult<()> {
+        let disposition = self.disposition_collector.finish();
+        self.events.push(format!("contentDisposition:{disposition}"));
+        self.content_disposition = Some(disposition);
+        Ok(())
+    }
+
+    // The parameters of whichever of the two is open
+    fn start_parameter(&mut self, name: &str, language: Option<&str>) -> ParseResult<()> {
+        self.content_type_collector.start_parameter(name, language);
+        self.disposition_collector.start_parameter(name, language);
+        Ok(())
+    }
+
+    fn parameter_content(&mut self, text: &str) -> ParseResult<()> {
+        self.content_type_collector.parameter_content(text);
+        self.disposition_collector.parameter_content(text);
+        Ok(())
+    }
+
+    fn end_parameter(&mut self) -> ParseResult<()> {
+        self.content_type_collector.end_parameter();
+        self.disposition_collector.end_parameter();
+        Ok(())
+    }
+
+    fn malformed_header(&mut self, name: &str, reason: &str) -> ParseResult<()> {
+        self.malformed.push((name.to_string(), reason.to_string(), String::new()));
+        self.in_malformed = true;
         Ok(())
     }
 
@@ -72,13 +117,22 @@ impl MimeHandler for TestHandler {
         Ok(())
     }
 
+    fn end_header(&mut self) -> ParseResult<()> {
+        self.in_malformed = false;
+        Ok(())
+    }
+
     fn start_header(&mut self, name: &str) -> ParseResult<()> {
         self.headers.push((name.to_string(), String::new()));
         Ok(())
     }
 
     fn header_content(&mut self, text: &str) -> ParseResult<()> {
-        self.headers.last_mut().unwrap().1.push_str(text);
+        if self.in_malformed {
+            self.malformed.last_mut().unwrap().2.push_str(text);
+        } else {
+            self.headers.last_mut().unwrap().1.push_str(text);
+        }
         Ok(())
     }
 
@@ -314,8 +368,8 @@ fn test_header_value_too_long() {
     let mut parser = MimeParser::new(&mut handler);
     parser.limits_mut().max_header_value_size = Some(50);
 
-    // Content-Type is one of the headers the parser holds whole to parse
-    let mut sb = String::from("Content-Type: text/plain; x=");
+    // Content-Transfer-Encoding is one of the headers the parser holds whole to parse
+    let mut sb = String::from("Content-Transfer-Encoding: ");
     for _ in 0..49 {
         sb.push('a');
     }
@@ -804,4 +858,124 @@ fn test_the_value_limit_applies_to_a_header_taken_raw() {
     ring.extend_from_slice(msg.as_bytes());
     let err = parser.receive(&mut ring).unwrap_err();
     assert!(err.message().contains("maximum"), "{err}");
+}
+
+// ---- Content-Type and Content-Disposition stream ----
+
+fn parse_chunked(msg: &str, step: usize) -> TestHandler {
+    let mut handler = TestHandler::new();
+    {
+        let mut parser = MimeParser::new(&mut handler);
+        let mut ring = LoopBuf::with_capacity(8192);
+        for chunk in msg.as_bytes().chunks(step) {
+            ring.extend_from_slice(chunk);
+            parser.receive(&mut ring).unwrap();
+        }
+        parser.close(&mut ring).unwrap();
+    }
+    handler
+}
+
+#[test]
+fn test_a_huge_parameter_value_is_streamed_not_held() {
+    let mut handler = TestHandler::new();
+    let mut parser = MimeParser::new(&mut handler);
+    parser.limits_mut().max_header_value_size = Some(50);
+    let mut msg = String::from("Content-Disposition: attachment; filename=\"");
+    for _ in 0..300 {
+        msg.push_str("a long file name part\r\n ");
+    }
+    msg.push_str("\"\r\n\r\nbody");
+    parse(&mut parser, &msg).unwrap();
+    let cd = handler.content_disposition.unwrap();
+    assert!(cd.is_disposition_type("attachment"));
+    assert!(cd.get_parameter("filename").unwrap().len() > 6000);
+}
+
+#[test]
+fn test_content_type_arrives_the_same_whatever_the_chunking() {
+    let msg = "Content-Type: multipart/mixed;\r\n boundary=\"b-1\"; charset=\"utf-8\";\r\n title*0*=UTF-8''caf%C3;\r\n title*1*=%A9%20au; title*2=\" lait\"\r\n\r\npreamble\r\n--b-1\r\n\r\nx\r\n--b-1--\r\n";
+    let whole = parse_chunked(msg, 1000);
+    let ct = whole.content_type.clone().unwrap();
+    assert!(ct.is_mime_type("multipart", "mixed"));
+    assert_eq!(ct.get_parameter("boundary"), Some("b-1"));
+    assert_eq!(ct.get_parameter("title"), Some("caf\u{e9} au lait"));
+    for step in [1usize, 2, 3, 5, 7, 11, 13] {
+        let got = parse_chunked(msg, step);
+        assert_eq!(got.content_type, whole.content_type, "step {step}");
+        // how many calls the body takes depends on the chunking; what it says does not
+        let mut a = got.events.clone();
+        let mut b = whole.events.clone();
+        a.dedup();
+        b.dedup();
+        assert_eq!(a, b, "step {step}");
+    }
+}
+
+#[test]
+fn test_the_multipart_boundary_comes_from_the_streamed_parameter() {
+    // the boundary is read while the parameter streams past, whatever the
+    // chunking, folded onto its own line, and quoted
+    let msg = "Content-Type: multipart/mixed;\r\n boundary=\"split-here\"\r\n\r\n--split-here\r\n\r\npart\r\n--split-here--\r\n";
+    for step in [1usize, 4, 1000] {
+        let h = parse_chunked(msg, step);
+        assert!(h.events.iter().any(|e| e == "startEntity:split-here"), "step {step}: {:?}", h.events);
+    }
+    // not multipart: a boundary parameter means nothing
+    let h = parse_chunked("Content-Type: text/plain; boundary=x\r\n\r\n--x\r\nbody", 1000);
+    assert!(!h.events.iter().any(|e| e.starts_with("startEntity:x")));
+    // an invalid boundary (too long) is not used
+    let long = "b".repeat(71);
+    let h = parse_chunked(&format!("Content-Type: multipart/mixed; boundary={long}\r\n\r\n--{long}\r\nx"), 1000);
+    assert!(!h.events.iter().any(|e| e.starts_with("startEntity:b")));
+}
+
+#[test]
+fn test_a_content_type_that_is_not_valid_is_reported_with_its_text() {
+    for step in [1usize, 3, 1000] {
+        let h = parse_chunked("Content-Type: text plain; charset=x\r\n\r\nbody", step);
+        assert!(h.content_type.is_none(), "step {step}");
+        assert_eq!(h.malformed.len(), 1, "step {step}");
+        let (name, reason, text) = &h.malformed[0];
+        assert_eq!(name, "Content-Type");
+        assert!(reason.contains("subtype") || reason.contains("type"), "{reason}");
+        // the whole value, as unstructured text
+        assert_eq!(text, "text plain; charset=x", "step {step}");
+    }
+    // a value that ends before the head is complete
+    let h = parse_chunked("Content-Type: text\r\n\r\nbody", 1000);
+    assert_eq!(h.malformed[0].2, "text");
+    // and one too long to be a head, over folded lines
+    let folded = "ddddddddd\r\n ".repeat(200);
+    let h = parse_chunked(&format!("Content-Disposition: {folded}\r\n\r\nx"), 1000);
+    assert_eq!(h.malformed.len(), 1);
+    assert_eq!(h.malformed[0].2.replace(' ', "").len(), 1800);
+}
+
+#[test]
+fn test_the_extended_parameter_says_it_is_extended() {
+    #[derive(Default)]
+    struct Seen(Vec<(String, Option<String>)>);
+    impl MimeHandler for Seen {
+        fn start_parameter(&mut self, name: &str, language: Option<&str>) -> ParseResult<()> {
+            self.0.push((name.to_string(), language.map(str::to_string)));
+            Ok(())
+        }
+    }
+    let mut seen = Seen::default();
+    let mut parser = MimeParser::new(&mut seen);
+    let msg = "Content-Disposition: attachment; a=1; b*=UTF-8'en'x; c*=UTF-8''y; d*0=\"z\"\r\n\r\n";
+    let mut ring = LoopBuf::with_capacity(4096);
+    ring.extend_from_slice(msg.as_bytes());
+    parser.receive(&mut ring).unwrap();
+    parser.close(&mut ring).unwrap();
+    assert_eq!(
+        seen.0,
+        vec![
+            ("a".to_string(), None),
+            ("b".to_string(), Some("en".to_string())),
+            ("c".to_string(), Some(String::new())),
+            ("d".to_string(), None),
+        ]
+    );
 }

@@ -7,7 +7,6 @@ use loopbuf::LoopBuf;
 
 use crate::buffer::ByteCursor;
 use crate::charset::HeaderCharset;
-use crate::mime::content_type_parser::{ContentDispositionParser, ContentTypeParser};
 use crate::mime::content_types::MimeVersion;
 use crate::mime::content_id_parser::ContentIdParser;
 use crate::mime::decoders::{
@@ -16,6 +15,7 @@ use crate::mime::decoders::{
 use crate::mime::error::{ParseError, ParseResult};
 use crate::mime::handler::{HeaderDelivery, Locator, MimeHandler, SharedLocator};
 use crate::mime::limits::ParserLimits;
+use crate::mime::parameters::{Fed, Kind, ParameterParser, ParameterSink};
 use crate::mime::messages::{
     format_header_value_too_long, format_unclosed_boundary, MIMEMessages,
 };
@@ -58,10 +58,99 @@ enum ValueMode {
     /// One of the headers the parser understands: its value is collected
     /// whole (up to `max_header_value_size`) and parsed when it is complete.
     Buffered,
+    /// `Content-Type`, read by the parameter grammar as it arrives.
+    ContentType,
+    /// `Content-Disposition`, likewise.
+    ContentDisposition,
     /// Decoded and handed to the handler as it arrives.
     Unstructured,
     /// Handed to the handler as it arrives, undecoded.
     Raw,
+}
+
+/// Picks the `boundary` parameter out of a multipart `Content-Type` as it goes
+/// by, for the parser's own use.
+#[derive(Default)]
+struct BoundaryCollector {
+    multipart: bool,
+    collecting: bool,
+    seen: bool,
+    fits: bool,
+    value: Vec<u8>,
+}
+
+impl BoundaryCollector {
+    fn begin(&mut self) {
+        *self = Self {
+            value: std::mem::take(&mut self.value),
+            ..Self::default()
+        };
+        self.value.clear();
+    }
+
+    fn start_parameter(&mut self, name: &str, language: Option<&str>) {
+        self.collecting = self.multipart
+            && !self.seen
+            && language.is_none()
+            && name.eq_ignore_ascii_case("boundary");
+        if self.collecting {
+            self.seen = true;
+            self.fits = true;
+            self.value.clear();
+        }
+    }
+
+    fn content(&mut self, text: &str) {
+        if self.collecting {
+            // no boundary is longer than 70
+            if self.value.len() + text.len() > 70 {
+                self.fits = false;
+            } else {
+                self.value.extend_from_slice(text.as_bytes());
+            }
+        }
+    }
+
+    /// The boundary, if the header had a valid one.
+    fn boundary(&self) -> Option<&str> {
+        let boundary = std::str::from_utf8(&self.value).ok()?;
+        (self.seen && self.fits && is_valid_boundary(boundary)).then_some(boundary)
+    }
+}
+
+/// Delivers the grammar's events to the handler, and to the boundary collector.
+struct EventSink<'a, H: MimeHandler> {
+    handler: &'a mut H,
+    kind: Kind,
+    boundary: &'a mut BoundaryCollector,
+}
+
+impl<H: MimeHandler> ParameterSink for EventSink<'_, H> {
+    fn head(&mut self, first: &str, second: &str) -> ParseResult<()> {
+        match self.kind {
+            Kind::ContentType => {
+                self.boundary.begin();
+                self.boundary.multipart = first.eq_ignore_ascii_case("multipart");
+                self.handler.start_content_type(first, second)
+            }
+            Kind::ContentDisposition => self.handler.start_content_disposition(first),
+        }
+    }
+
+    fn start_parameter(&mut self, name: &str, language: Option<&str>) -> ParseResult<()> {
+        self.boundary.start_parameter(name, language);
+        self.handler.start_parameter(name, language)
+    }
+
+    fn content(&mut self, text: &str) -> ParseResult<()> {
+        self.boundary.content(text);
+        self.handler.parameter_content(text)
+    }
+
+    fn end_parameter(&mut self) -> ParseResult<()> {
+        self.boundary.collecting = false;
+        self.handler.end_parameter()
+    }
 }
 
 /// Where the body scanner is within a line (multipart states only).
@@ -123,6 +212,9 @@ pub struct MimeParser<H: MimeHandler, W: MimeWireSink = NoWire> {
     header_value_len: usize,
     /// Reads the text of unstructured headers.
     text_decoder: HeaderTextDecoder,
+    /// Reads `Content-Type` and `Content-Disposition`.
+    params: ParameterParser,
+    boundary: BoundaryCollector,
     header_value_sink: Vec<u8>,
     header_raw_name: Option<String>,
     header_raw_sink: Vec<u8>,
@@ -184,6 +276,8 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             value_mode: ValueMode::Buffered,
             header_value_len: 0,
             text_decoder: HeaderTextDecoder::new(false),
+            params: ParameterParser::new(false),
+            boundary: BoundaryCollector::default(),
             header_value_sink: Vec::with_capacity(INITIAL_HEADER_VALUE_CAPACITY),
             header_raw_name: None,
             header_raw_sink: Vec::new(),
@@ -245,6 +339,7 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
     /// (Valid UTF-8 is read as UTF-8 either way.) Call before parsing.
     pub fn set_utf8_headers(&mut self, utf8_headers: bool) {
         self.text_decoder = HeaderTextDecoder::new(utf8_headers);
+        self.params = ParameterParser::new(utf8_headers);
     }
 
     /// The handler the parser is driving.
@@ -613,6 +708,17 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
     /// Decides how the value of the header just named is dealt with, and tells
     /// the handler it is starting if it is for the handler.
     fn start_value(&mut self) -> ParseResult<()> {
+        let max_token = self.limits.max_token_length.unwrap_or(usize::MAX);
+        if self.header_name.eq_ignore_ascii_case("content-type") {
+            self.value_mode = ValueMode::ContentType;
+            self.params.start(Kind::ContentType, max_token);
+            return Ok(());
+        }
+        if self.header_name.eq_ignore_ascii_case("content-disposition") {
+            self.value_mode = ValueMode::ContentDisposition;
+            self.params.start(Kind::ContentDisposition, max_token);
+            return Ok(());
+        }
         if is_understood_header(&self.header_name) {
             self.value_mode = ValueMode::Buffered;
             return Ok(());
@@ -637,6 +743,17 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
                 self.check_header_size(self.header_value_sink.len(), bytes.len())?;
                 self.header_value_sink.extend_from_slice(bytes);
             }
+            ValueMode::ContentType | ValueMode::ContentDisposition => {
+                let kind = self.params_kind();
+                let mut sink = EventSink {
+                    handler: &mut self.handler,
+                    kind,
+                    boundary: &mut self.boundary,
+                };
+                if let Fed::Malformed { reason, rest } = self.params.feed(bytes, &mut sink)? {
+                    self.malformed(reason, &bytes[rest..])?;
+                }
+            }
             ValueMode::Unstructured => {
                 let handler = &mut self.handler;
                 self.text_decoder
@@ -652,6 +769,59 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         Ok(())
     }
 
+    fn params_kind(&self) -> Kind {
+        if self.value_mode == ValueMode::ContentType {
+            Kind::ContentType
+        } else {
+            Kind::ContentDisposition
+        }
+    }
+
+    /// The value of a `Content-Type` or `Content-Disposition` is complete.
+    /// False if it turned out not to be valid, in which case the handler has
+    /// been told and the rest is unstructured text.
+    fn finish_structured(&mut self) -> ParseResult<bool> {
+        let kind = self.params_kind();
+        let mut sink = EventSink {
+            handler: &mut self.handler,
+            kind,
+            boundary: &mut self.boundary,
+        };
+        if let Fed::Malformed { reason, rest: _ } = self.params.finish(&mut sink)? {
+            self.malformed(reason, &[])?;
+            return Ok(false);
+        }
+        match kind {
+            Kind::ContentType => {
+                self.handler.end_content_type()?;
+                if let Some(boundary) = self.boundary.boundary() {
+                    let boundary = boundary.to_string();
+                    if self.boundary_set {
+                        self.boundaries.pop();
+                    }
+                    self.boundaries.push(boundary);
+                    self.boundary_set = true;
+                }
+            }
+            Kind::ContentDisposition => self.handler.end_content_disposition()?,
+        }
+        Ok(true)
+    }
+
+    /// The head of the `Content-Type` or `Content-Disposition` is not valid:
+    /// the handler is told, and the value so far and `rest` are delivered as
+    /// unstructured text.
+    fn malformed(&mut self, reason: &str, rest: &[u8]) -> ParseResult<()> {
+        self.handler.malformed_header(&self.header_name, reason)?;
+        self.value_mode = ValueMode::Unstructured;
+        self.text_decoder.reset();
+        let handler = &mut self.handler;
+        self.text_decoder
+            .feed(self.params.head(), &mut |text| handler.header_content(text))?;
+        self.text_decoder
+            .feed(rest, &mut |text| handler.header_content(text))
+    }
+
     /// Hands the accumulated header to the handler, keeping its buffers.
     fn flush_header(&mut self) -> ParseResult<()> {
         if !self.header_active {
@@ -659,7 +829,16 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         }
         self.header_active = false;
         self.header_value_len = 0;
-        match self.value_mode {
+        let mut mode = self.value_mode;
+        if matches!(mode, ValueMode::ContentType | ValueMode::ContentDisposition) {
+            if self.finish_structured()? {
+                return Ok(());
+            }
+            // it was not valid, and is now unstructured text to be finished
+            mode = ValueMode::Unstructured;
+        }
+        match mode {
+            ValueMode::ContentType | ValueMode::ContentDisposition => unreachable!(),
             ValueMode::Buffered => {
                 let name = std::mem::take(&mut self.header_name);
                 let value = std::mem::take(&mut self.header_value_sink);
@@ -681,11 +860,7 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
 
     fn header(&mut self, name: &str, value: &[u8]) -> ParseResult<()> {
         let is = |wanted: &str| name.eq_ignore_ascii_case(wanted);
-        if is("content-type") {
-            self.handle_content_type_header(value)
-        } else if is("content-disposition") {
-            self.handle_content_disposition_header(value)
-        } else if is("content-transfer-encoding") {
+        if is("content-transfer-encoding") {
             self.handle_content_transfer_encoding_header(value)
         } else if is("content-id") {
             self.handle_content_id_header(value)
@@ -694,37 +869,6 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         } else {
             Ok(())
         }
-    }
-
-    fn handle_content_type_header(&mut self, value: &[u8]) -> ParseResult<()> {
-        let mut cursor = ByteCursor::new(value);
-        if let Some(content_type) =
-            ContentTypeParser::parse(&mut cursor, HeaderCharset::Iso88591)
-        {
-            if content_type.is_primary_type("multipart") {
-                if let Some(boundary) = content_type.parameter("boundary") {
-                    if is_valid_boundary(boundary) {
-                        if self.boundary_set {
-                            self.boundaries.pop();
-                        }
-                        self.boundaries.push(boundary.to_string());
-                        self.boundary_set = true;
-                    }
-                }
-            }
-            self.handler.content_type(&content_type)?;
-        }
-        Ok(())
-    }
-
-    fn handle_content_disposition_header(&mut self, value: &[u8]) -> ParseResult<()> {
-        let mut cursor = ByteCursor::new(value);
-        if let Some(disposition) =
-            ContentDispositionParser::parse(&mut cursor, HeaderCharset::Iso88591)
-        {
-            self.handler.content_disposition(&disposition)?;
-        }
-        Ok(())
     }
 
     fn handle_content_transfer_encoding_header(&mut self, value: &[u8]) -> ParseResult<()> {
@@ -1306,8 +1450,6 @@ pub fn check_boundary(line: &[u8], boundary: &str) -> Option<BoundaryMatch> {
 /// to the handler.
 fn is_understood_header(name: &str) -> bool {
     [
-        "content-type",
-        "content-disposition",
         "content-transfer-encoding",
         "content-id",
         "mime-version",

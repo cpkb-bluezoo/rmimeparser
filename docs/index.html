@@ -320,7 +320,8 @@ assert_eq!(parser.handler().bytes, 7);</code></pre>
         </p>
 <pre><code>set_locator(...)
 start_entity(None)
-  header callbacks: content_type, … for the MIME headers;
+  header callbacks: start_content_type … end_content_type (parameters between)
+    and the other MIME headers; start_header, header_content*, end_header for the rest
     start_header, header_content*, end_header for every other header
   end_headers()
   body_content(...)       // transfer-decoded octets (may be chunked)
@@ -358,8 +359,34 @@ end_entity(None)          // from close()</code></pre>
               </td>
             </tr>
             <tr>
-              <td class="callback">content_type</td>
-              <td>Parsed <code>Content-Type</code> (and similarly disposition, CTE, Content-ID, MIME-Version). These five are the headers the parser understands; everything else is unstructured text.</td>
+              <td class="callback">start_content_type / end_content_type</td>
+              <td>
+                <code>Content-Type</code>: the type and subtype, then its parameters, then the end.
+                <code>Content-Disposition</code> likewise (<code>start_content_disposition</code>).
+                Nothing is held but the head; a parameter value of any size streams.
+              </td>
+            </tr>
+            <tr>
+              <td class="callback">start_parameter / parameter_content / end_parameter</td>
+              <td>
+                One parameter, its value decoded and in pieces of no particular size: quoted-pairs,
+                RFC&nbsp;2047 words and RFC&nbsp;2231 (<code>name*=</code>, and continuations
+                <code>name*0</code>, <code>name*1</code> joined in order) all resolved.
+                <code>language</code> is <code>Some</code> for an extended value, so a handler can prefer
+                <code>filename*</code> to <code>filename</code>.
+              </td>
+            </tr>
+            <tr>
+              <td class="callback">malformed_header</td>
+              <td>
+                The head of a <code>Content-Type</code> / <code>Content-Disposition</code> is not valid.
+                Stands in for <code>start_header</code>: the whole value follows as unstructured text,
+                <code>header_content</code> then <code>end_header</code>.
+              </td>
+            </tr>
+            <tr>
+              <td class="callback">content_transfer_encoding, content_id, mime_version</td>
+              <td>The other headers the parser understands: short values, delivered whole.</td>
             </tr>
             <tr>
               <td class="callback">end_headers</td>

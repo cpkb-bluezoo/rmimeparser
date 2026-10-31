@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use loopbuf::LoopBuf;
 
-use crate::mime::content_types::{ContentDisposition, ContentId, ContentType, MimeVersion};
+use crate::mime::content_types::{ContentId, MimeVersion};
 use crate::mime::error::ParseResult;
 use crate::mime::handler::{HeaderDelivery, Locator, MimeHandler};
 use crate::mime::limits::ParserLimits;
@@ -133,12 +133,36 @@ impl<H: MessageHandler> MimeHandler for MessageBridge<H> {
         self.inner.start_entity(boundary)
     }
 
-    fn content_type(&mut self, content_type: &ContentType) -> ParseResult<()> {
-        self.inner.content_type(content_type)
+    fn start_content_type(&mut self, primary: &str, sub: &str) -> ParseResult<()> {
+        self.inner.start_content_type(primary, sub)
     }
 
-    fn content_disposition(&mut self, disposition: &ContentDisposition) -> ParseResult<()> {
-        self.inner.content_disposition(disposition)
+    fn end_content_type(&mut self) -> ParseResult<()> {
+        self.inner.end_content_type()
+    }
+
+    fn start_content_disposition(&mut self, kind: &str) -> ParseResult<()> {
+        self.inner.start_content_disposition(kind)
+    }
+
+    fn end_content_disposition(&mut self) -> ParseResult<()> {
+        self.inner.end_content_disposition()
+    }
+
+    fn start_parameter(&mut self, name: &str, language: Option<&str>) -> ParseResult<()> {
+        self.inner.start_parameter(name, language)
+    }
+
+    fn parameter_content(&mut self, text: &str) -> ParseResult<()> {
+        self.inner.parameter_content(text)
+    }
+
+    fn end_parameter(&mut self) -> ParseResult<()> {
+        self.inner.end_parameter()
+    }
+
+    fn malformed_header(&mut self, name: &str, reason: &str) -> ParseResult<()> {
+        self.inner.malformed_header(name, reason)
     }
 
     fn content_transfer_encoding(&mut self, encoding: &str) -> ParseResult<()> {

@@ -11,6 +11,10 @@ pub struct ParserLimits {
     /// The longest header name. It has to arrive whole, in the header's first
     /// line. Default: 1024.
     pub max_header_name_length: Option<usize>,
+    /// The longest token the grammar of `Content-Type` and `Content-Disposition`
+    /// holds to judge: the type, subtype and disposition type, parameter names,
+    /// and the charset and language of an extended value. Default: 256.
+    pub max_token_length: Option<usize>,
     /// The longest value, once its folded lines are joined, of a header the
     /// parser holds whole to parse: the MIME headers it understands, and any
     /// header a layer on top asks to be given raw because it holds the value
@@ -24,6 +28,7 @@ impl Default for ParserLimits {
         Self {
             max_header_line_length: Some(998),
             max_header_name_length: Some(1024),
+            max_token_length: Some(256),
             max_header_value_size: Some(32 * 1024),
         }
     }
@@ -35,6 +40,7 @@ impl ParserLimits {
         Self {
             max_header_line_length: None,
             max_header_name_length: None,
+            max_token_length: None,
             max_header_value_size: None,
         }
     }

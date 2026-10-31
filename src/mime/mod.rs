@@ -1,3 +1,4 @@
+pub mod collectors;
 pub mod content_types;
 pub mod content_id_parser;
 pub mod content_type_parser;
@@ -10,6 +11,7 @@ pub mod limits;
 pub mod message_id_parser;
 pub mod messages;
 pub mod parameter;
+pub(crate) mod parameters;
 pub mod parser;
 pub mod utils;
 pub mod wire_sink;
@@ -20,6 +22,9 @@ pub use content_types::{
     ContentDisposition, ContentId, ContentType, MimeVersion,
 };
 pub use content_type_parser::{ContentDispositionParser, ContentTypeParser};
+pub use collectors::{
+    ContentDispositionCollector, ContentTypeCollector, ParameterCollector,
+};
 pub use content_id_parser::ContentIdParser;
 pub use message_id_parser::MessageIdParser;
 pub use decoders::{

@@ -346,3 +346,124 @@ mod tests {
         assert_eq!(bytes_to_iso88591(b"ascii only"), "ascii only");
     }
 }
+
+/// How [`ByteDecoder`] reads the bytes of a named charset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ByteCharset {
+    /// UTF-8, an invalid sequence becoming U+FFFD.
+    Utf8,
+    Windows1252,
+    Latin1,
+    /// Any other charset: UTF-8 where it is valid, ISO-8859-1 where it is not,
+    /// as [`decode_bytes_named`] does for the charsets it does not know.
+    Utf8OrLatin1,
+}
+
+impl ByteCharset {
+    pub(crate) fn from_name(name: &str) -> Self {
+        match named_charset(name) {
+            NamedCharset::Utf8 => Self::Utf8,
+            NamedCharset::Windows1252 => Self::Windows1252,
+            NamedCharset::Latin1 => Self::Latin1,
+            NamedCharset::Other => Self::Utf8OrLatin1,
+        }
+    }
+}
+
+/// Decodes bytes to text in any chunking, holding at most the start of a UTF-8
+/// sequence between calls.
+#[derive(Debug, Clone)]
+pub(crate) struct ByteDecoder {
+    charset: ByteCharset,
+    carry: [u8; 4],
+    carry_len: usize,
+    carry_need: usize,
+}
+
+impl ByteDecoder {
+    pub(crate) fn new(charset: ByteCharset) -> Self {
+        Self {
+            charset,
+            carry: [0; 4],
+            carry_len: 0,
+            carry_need: 0,
+        }
+    }
+
+    pub(crate) fn feed(&mut self, bytes: &[u8], out: &mut String) {
+        match self.charset {
+            ByteCharset::Latin1 => out.extend(bytes.iter().map(|&b| b as char)),
+            ByteCharset::Windows1252 => {
+                out.extend(bytes.iter().map(|&b| WINDOWS_1252[b as usize]))
+            }
+            ByteCharset::Utf8 | ByteCharset::Utf8OrLatin1 => {
+                for &b in bytes {
+                    self.utf8_byte(b, out);
+                }
+            }
+        }
+    }
+
+    /// Ends the text: an unfinished sequence is invalid.
+    pub(crate) fn finish(&mut self, out: &mut String) {
+        self.flush_carry(out);
+    }
+
+    fn utf8_byte(&mut self, b: u8, out: &mut String) {
+        if b < 0x80 {
+            self.flush_carry(out);
+            out.push(b as char);
+            return;
+        }
+        if self.carry_len == 0 {
+            let need = match b {
+                0xC2..=0xDF => 2,
+                0xE0..=0xEF => 3,
+                0xF0..=0xF4 => 4,
+                _ => {
+                    self.invalid(b, out);
+                    return;
+                }
+            };
+            self.carry[0] = b;
+            self.carry_len = 1;
+            self.carry_need = need;
+            return;
+        }
+        if b & 0xC0 != 0x80 {
+            self.flush_carry(out);
+            self.utf8_byte(b, out);
+            return;
+        }
+        self.carry[self.carry_len] = b;
+        self.carry_len += 1;
+        if self.carry_len == self.carry_need {
+            let bytes = self.carry;
+            let n = self.carry_len;
+            match std::str::from_utf8(&bytes[..n]) {
+                Ok(s) => {
+                    self.carry_len = 0;
+                    out.push_str(s);
+                }
+                Err(_) => self.flush_carry(out),
+            }
+        }
+    }
+
+    /// A byte that is not UTF-8: U+FFFD or, for other charsets, ISO-8859-1.
+    fn invalid(&self, b: u8, out: &mut String) {
+        out.push(match self.charset {
+            ByteCharset::Utf8 => '\u{FFFD}',
+            _ => b as char,
+        });
+    }
+
+    fn flush_carry(&mut self, out: &mut String) {
+        let bytes = self.carry;
+        let n = self.carry_len;
+        self.carry_len = 0;
+        for &b in &bytes[..n] {
+            self.invalid(b, out);
+        }
+    }
+}

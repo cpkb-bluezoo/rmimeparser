@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use loopbuf::LoopBuf;
 use rmimeparser::{
-    ContentId, ContentType, EmailAddress, Locator, MessageHandler, MessageParser, MimeHandler,
+    ContentId, ContentType, ContentTypeCollector, EmailAddress, Locator, MessageHandler, MessageParser, MimeHandler,
     MimeVersion, OffsetDateTime, ParseResult,
 };
 
@@ -15,6 +15,7 @@ struct TestMessageHandler {
     unstructured_headers: HashMap<String, String>,
     unexpected_headers: HashMap<String, String>,
     current_header: (String, String),
+    content_type_collector: ContentTypeCollector,
     content_type: Option<ContentType>,
     mime_version: Option<MimeVersion>,
     body: Vec<u8>,
@@ -30,6 +31,7 @@ impl TestMessageHandler {
             unstructured_headers: HashMap::new(),
             unexpected_headers: HashMap::new(),
             current_header: Default::default(),
+            content_type_collector: Default::default(),
             content_type: None,
             mime_version: None,
             body: Vec::new(),
@@ -74,8 +76,28 @@ impl MimeHandler for TestMessageHandler {
         Ok(())
     }
 
-    fn content_type(&mut self, content_type: &ContentType) -> ParseResult<()> {
-        self.content_type = Some(content_type.clone());
+    fn start_content_type(&mut self, primary: &str, sub: &str) -> ParseResult<()> {
+        self.content_type_collector.start(primary, sub);
+        Ok(())
+    }
+
+    fn start_parameter(&mut self, name: &str, language: Option<&str>) -> ParseResult<()> {
+        self.content_type_collector.start_parameter(name, language);
+        Ok(())
+    }
+
+    fn parameter_content(&mut self, text: &str) -> ParseResult<()> {
+        self.content_type_collector.parameter_content(text);
+        Ok(())
+    }
+
+    fn end_parameter(&mut self) -> ParseResult<()> {
+        self.content_type_collector.end_parameter();
+        Ok(())
+    }
+
+    fn end_content_type(&mut self) -> ParseResult<()> {
+        self.content_type = Some(self.content_type_collector.finish());
         Ok(())
     }
 
