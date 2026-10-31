@@ -15,24 +15,11 @@ pub(crate) fn classify(name: &str) -> Option<RawKind> {
     let mut buf = [0u8; LOWER_NAME_MAX];
     match lowercase_name(name, &mut buf) {
         "date" | "resent-date" => Some(RawKind::Date),
-        "from"
-        | "sender"
-        | "to"
-        | "cc"
-        | "bcc"
-        | "reply-to"
-        | "resent-from"
-        | "return-path"
-        | "resent-sender"
-        | "resent-to"
-        | "resent-cc"
-        | "resent-bcc"
-        | "resent-reply-to"
-        | "envelope-to"
-        | "delivered-to"
-        | "x-original-to"
-        | "errors-to"
-        | "apparently-to" => Some(RawKind::Address),
+        "from" | "sender" | "to" | "cc" | "bcc" | "reply-to" | "resent-from" | "return-path"
+        | "resent-sender" | "resent-to" | "resent-cc" | "resent-bcc" | "resent-reply-to"
+        | "envelope-to" | "delivered-to" | "x-original-to" | "errors-to" | "apparently-to" => {
+            Some(RawKind::Address)
+        }
         "message-id" | "in-reply-to" | "references" | "resent-message-id" => {
             Some(RawKind::MessageId)
         }

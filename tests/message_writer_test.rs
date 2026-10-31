@@ -46,8 +46,12 @@ impl MessageHandler for Capture {
 
     fn mailbox(&mut self, display: Option<&str>, local: &str, domain: &str) -> ParseResult<()> {
         if self.address_header.eq_ignore_ascii_case("from") {
-            self.from
-                .push(EmailAddress::new(display.map(str::to_string), local, domain, false));
+            self.from.push(EmailAddress::new(
+                display.map(str::to_string),
+                local,
+                domain,
+                false,
+            ));
         }
         Ok(())
     }
@@ -67,12 +71,14 @@ fn write_message_with_subject_and_date() {
         let mut w = MessageWriter::new();
         w.start_entity(&mut ring, None).unwrap();
         w.header(&mut ring, "Subject", "Café résumé").unwrap();
-        w.date_header(&mut ring, 
+        w.date_header(
+            &mut ring,
             "Date",
             OffsetDateTime::new(2024, 6, 15, 12, 30, 0, 0),
         )
         .unwrap();
-        w.address_header(&mut ring, 
+        w.address_header(
+            &mut ring,
             "From",
             &[EmailAddress::new(
                 Some("José".into()),
@@ -84,7 +90,8 @@ fn write_message_with_subject_and_date() {
         .unwrap();
         w.content_type(&mut ring, &ContentType::new("text", "plain", None))
             .unwrap();
-        w.content_transfer_encoding(&mut ring, "quoted-printable").unwrap();
+        w.content_transfer_encoding(&mut ring, "quoted-printable")
+            .unwrap();
         w.end_headers(&mut ring).unwrap();
         w.body_content(&mut ring, "Hello café".as_bytes()).unwrap();
         w.end_entity(&mut ring, None).unwrap();
@@ -109,10 +116,7 @@ fn write_message_with_subject_and_date() {
 
     assert_eq!(capture.subject.as_deref(), Some("Café résumé"));
     // Parser delivers QP line endings as part of decoded body.
-    assert_eq!(
-        String::from_utf8_lossy(&capture.body).trim(),
-        "Hello café"
-    );
+    assert_eq!(String::from_utf8_lossy(&capture.body).trim(), "Hello café");
     assert!(capture.date.is_some());
     assert_eq!(capture.from.len(), 1);
     assert_eq!(capture.from[0].address(), "jose@example.com");

@@ -55,7 +55,10 @@ pub(crate) enum Fed {
     /// The head is not valid. Nothing was delivered. [`ParameterParser::head`]
     /// holds every byte of the value up to and including the one that showed
     /// it, and `rest` is where in the bytes just fed the unread ones begin.
-    Malformed { reason: &'static str, rest: usize },
+    Malformed {
+        reason: &'static str,
+        rest: usize,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -175,11 +178,7 @@ impl ParameterParser {
         &self.head
     }
 
-    pub(crate) fn feed(
-        &mut self,
-        bytes: &[u8],
-        sink: &mut impl ParameterSink,
-    ) -> ParseResult<Fed> {
+    pub(crate) fn feed(&mut self, bytes: &[u8], sink: &mut impl ParameterSink) -> ParseResult<Fed> {
         let mut i = 0;
         while i < bytes.len() {
             match self.state {
@@ -228,25 +227,23 @@ impl ParameterParser {
                         }
                     }
                 }
-                State::AfterEquals => {
-                    match bytes[i] {
-                        b' ' | b'\t' => i += 1,
-                        b'"' => {
-                            i += 1;
-                            self.state = State::Quoted;
-                            self.escaped = false;
-                        }
-                        b';' => {
-                            i += 1;
-                            self.end_segment(sink)?;
-                            self.state = State::Between;
-                        }
-                        _ => {
-                            self.state = State::Unquoted;
-                            self.pending_whitespace.clear();
-                        }
+                State::AfterEquals => match bytes[i] {
+                    b' ' | b'\t' => i += 1,
+                    b'"' => {
+                        i += 1;
+                        self.state = State::Quoted;
+                        self.escaped = false;
                     }
-                }
+                    b';' => {
+                        i += 1;
+                        self.end_segment(sink)?;
+                        self.state = State::Between;
+                    }
+                    _ => {
+                        self.state = State::Unquoted;
+                        self.pending_whitespace.clear();
+                    }
+                },
                 State::Quoted => i = self.quoted(bytes, i, sink)?,
                 State::Unquoted => i = self.unquoted(bytes, i, sink)?,
                 State::AfterQuoted | State::Skip => {
@@ -342,7 +339,11 @@ impl ParameterParser {
                 self.start_prefix(base);
                 self.segment_ends_parameter = true;
             }
-            Form::Continuation { base, index, extended } => {
+            Form::Continuation {
+                base,
+                index,
+                extended,
+            } => {
                 let continues = self
                     .open
                     .as_ref()
@@ -529,7 +530,10 @@ impl ParameterParser {
     /// not a usable one.
     fn prefix_complete(&mut self, sink: &mut impl ParameterSink) -> ParseResult<bool> {
         let first = self.prefix.iter().position(|&b| b == b'\'').unwrap();
-        let (charset, language) = (&self.prefix[..first], &self.prefix[first + 1..self.prefix.len() - 1]);
+        let (charset, language) = (
+            &self.prefix[..first],
+            &self.prefix[first + 1..self.prefix.len() - 1],
+        );
         if charset.is_empty() || charset.len() > self.max_token || language.len() > self.max_token {
             return Ok(false);
         }
@@ -705,8 +709,14 @@ fn classify(name: &[u8]) -> Form<'_> {
     if digits.is_empty() || digits.len() > 9 || !digits.iter().all(u8::is_ascii_digit) {
         return Form::Plain;
     }
-    let index = digits.iter().fold(0u32, |n, &d| n * 10 + u32::from(d - b'0'));
-    Form::Continuation { base, index, extended }
+    let index = digits
+        .iter()
+        .fold(0u32, |n, &d| n * 10 + u32::from(d - b'0'));
+    Form::Continuation {
+        base,
+        index,
+        extended,
+    }
 }
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
@@ -721,8 +731,14 @@ fn ascii(bytes: &[u8]) -> &str {
 }
 
 fn trim(bytes: &[u8]) -> &[u8] {
-    let start = bytes.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(bytes.len());
-    let end = bytes.iter().rposition(|b| !b.is_ascii_whitespace()).map_or(start, |p| p + 1);
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())
+        .map_or(start, |p| p + 1);
     &bytes[start..end]
 }
 

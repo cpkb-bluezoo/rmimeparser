@@ -53,18 +53,37 @@ fn write_message(ring: &mut LoopBuf) -> Vec<u8> {
     }
     put!(|w: &mut MimeWriter, r| w.start_entity(r, None));
     put!(|w: &mut MimeWriter, r| w.mime_version(r, MimeVersion::V1_0));
-    put!(|w: &mut MimeWriter, r| w.header(r, "Subject", "a subject long enough to be folded, with some accents: café résumé naïve"));
+    put!(|w: &mut MimeWriter, r| w.header(
+        r,
+        "Subject",
+        "a subject long enough to be folded, with some accents: café résumé naïve"
+    ));
     put!(|w: &mut MimeWriter, r| w.content_type(
         r,
-        &ContentType::new("multipart", "mixed", Some(vec![Parameter::new("boundary", "BND")]))
+        &ContentType::new(
+            "multipart",
+            "mixed",
+            Some(vec![Parameter::new("boundary", "BND")])
+        )
     ));
     put!(|w: &mut MimeWriter, r| w.end_headers(r));
     for (cte, data) in [
-        ("7bit", "plain ascii text\nwith lines\n".repeat(40).into_bytes()),
-        ("8bit", "text with café and\nlines\n".repeat(40).into_bytes()),
+        (
+            "7bit",
+            "plain ascii text\nwith lines\n".repeat(40).into_bytes(),
+        ),
+        (
+            "8bit",
+            "text with café and\nlines\n".repeat(40).into_bytes(),
+        ),
         ("binary", payload(700)),
         ("base64", payload(2000)),
-        ("quoted-printable", "caf\u{e9} = tabs\tand spaces  \nlines\n".repeat(40).into_bytes()),
+        (
+            "quoted-printable",
+            "caf\u{e9} = tabs\tand spaces  \nlines\n"
+                .repeat(40)
+                .into_bytes(),
+        ),
     ] {
         put!(|w: &mut MimeWriter, r| w.start_entity(r, Some("BND")));
         put!(|w: &mut MimeWriter, r| w.content_transfer_encoding(r, cte));
@@ -97,12 +116,15 @@ fn a_header_that_does_not_fit_waits_and_leaves_the_writer_as_it_was() {
     w.start_entity(&mut ring, None).unwrap();
     ring.extend_from_slice(&[b'x'; 50]);
 
-    let err = w.header(&mut ring, "Subject", "twenty chars of text").unwrap_err();
+    let err = w
+        .header(&mut ring, "Subject", "twenty chars of text")
+        .unwrap_err();
     assert!(err.is_would_block(), "{err}");
     assert_eq!(ring.len(), 50, "nothing was written");
 
     drain(&mut ring, &mut sink);
-    w.header(&mut ring, "Subject", "twenty chars of text").unwrap();
+    w.header(&mut ring, "Subject", "twenty chars of text")
+        .unwrap();
     assert_eq!(ring.spans().to_vec(), b"Subject: twenty chars of text\r\n");
 }
 
@@ -112,7 +134,11 @@ fn a_call_larger_than_the_whole_ring_is_invalid_not_would_block() {
     let mut w = MimeWriter::new();
     w.start_entity(&mut ring, None).unwrap();
     let err = w
-        .header(&mut ring, "Subject", "far more than sixteen bytes of header")
+        .header(
+            &mut ring,
+            "Subject",
+            "far more than sixteen bytes of header",
+        )
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidInput);
     assert!(ring.is_empty());
@@ -123,10 +149,17 @@ fn a_call_larger_than_the_whole_ring_is_invalid_not_would_block() {
     let mut full = LoopBuf::with_capacity(1);
     full.extend_from_slice(b"x");
     let err = w.body_content(&mut full, b"\n").unwrap_err();
-    assert!(err.is_would_block(), "a full ring will have room once it is drained");
+    assert!(
+        err.is_would_block(),
+        "a full ring will have room once it is drained"
+    );
     let mut empty = LoopBuf::with_capacity(1);
     let err = w.body_content(&mut empty, b"\n").unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::InvalidInput, "one LF needs two bytes: CRLF");
+    assert_eq!(
+        err.kind(),
+        ErrorKind::InvalidInput,
+        "one LF needs two bytes: CRLF"
+    );
 }
 
 #[test]
@@ -137,7 +170,11 @@ fn a_child_delimiter_that_does_not_fit_leaves_the_entity_stack_as_it_was() {
     w.start_entity(&mut ring, None).unwrap();
     w.content_type(
         &mut ring,
-        &ContentType::new("multipart", "mixed", Some(vec![Parameter::new("boundary", "BND")])),
+        &ContentType::new(
+            "multipart",
+            "mixed",
+            Some(vec![Parameter::new("boundary", "BND")]),
+        ),
     )
     .unwrap();
     w.end_headers(&mut ring).unwrap();
@@ -201,7 +238,11 @@ fn a_boundary_in_the_body_is_refused_whatever_the_chunking_and_the_ring() {
         w.start_entity(&mut ring, None).unwrap();
         w.content_type(
             &mut ring,
-            &ContentType::new("multipart", "mixed", Some(vec![Parameter::new("boundary", "BND")])),
+            &ContentType::new(
+                "multipart",
+                "mixed",
+                Some(vec![Parameter::new("boundary", "BND")]),
+            ),
         )
         .unwrap();
         w.end_headers(&mut ring).unwrap();

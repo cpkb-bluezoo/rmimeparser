@@ -4,8 +4,7 @@ use std::io::{self, Write};
 
 use super::decoders::BASE64_MAX_LINE_LENGTH;
 
-const BASE64_TABLE: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
 /// Collects small writes in a stack buffer so a caller's unbuffered `Write`
@@ -462,7 +461,12 @@ fn encode_uu_line<W: Write>(batch: &mut Batch<'_, W>, bytes: &[u8]) -> io::Resul
 }
 
 /// Encode `data` as one complete uuencode section (`begin` … `end`).
-pub fn encode_uuencode<W: Write>(out: &mut W, filename: &str, mode: u32, data: &[u8]) -> io::Result<()> {
+pub fn encode_uuencode<W: Write>(
+    out: &mut W,
+    filename: &str,
+    mode: u32,
+    data: &[u8],
+) -> io::Result<()> {
     let mut enc = UuencodeEncoder::new(filename, mode);
     enc.write(out, data)?;
     enc.finish(out)

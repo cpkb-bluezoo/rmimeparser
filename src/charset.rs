@@ -238,8 +238,16 @@ pub mod base64 {
         let mut i = 0;
         while i < data.len() {
             let b0 = data[i] as u32;
-            let b1 = if i + 1 < data.len() { data[i + 1] as u32 } else { 0 };
-            let b2 = if i + 2 < data.len() { data[i + 2] as u32 } else { 0 };
+            let b1 = if i + 1 < data.len() {
+                data[i + 1] as u32
+            } else {
+                0
+            };
+            let b2 = if i + 2 < data.len() {
+                data[i + 2] as u32
+            } else {
+                0
+            };
             let triple = (b0 << 16) | (b1 << 8) | b2;
             out.push(TABLE[((triple >> 18) & 0x3F) as usize] as char);
             out.push(TABLE[((triple >> 12) & 0x3F) as usize] as char);
@@ -322,9 +330,25 @@ mod tests {
     fn charset_names_resolve_as_before() {
         let samples: [&[u8]; 4] = [b"plain", b"caf\xc3\xa9", b"caf\xe9 \x93q\x94", b""];
         let names = [
-            "UTF8", "utf-8", "Utf-8", " utf-8 ", "WIN1252", "windows1252", "Windows-1252",
-            "windows-1252", "LATIN1", "latin1", "ISO88591", "iso-88591", "ISO-8859-1",
-            "iso-8859-1", "ISO-8859-15", "KOI8-R", "us-ascii", "", "shift_jis",
+            "UTF8",
+            "utf-8",
+            "Utf-8",
+            " utf-8 ",
+            "WIN1252",
+            "windows1252",
+            "Windows-1252",
+            "windows-1252",
+            "LATIN1",
+            "latin1",
+            "ISO88591",
+            "iso-88591",
+            "ISO-8859-1",
+            "iso-8859-1",
+            "ISO-8859-15",
+            "KOI8-R",
+            "us-ascii",
+            "",
+            "shift_jis",
         ];
         for name in names {
             for bytes in samples {
@@ -408,9 +432,7 @@ impl ByteDecoder {
     pub(crate) fn feed(&mut self, bytes: &[u8], out: &mut String) {
         match self.charset {
             ByteCharset::Latin1 => out.extend(bytes.iter().map(|&b| b as char)),
-            ByteCharset::Windows1252 => {
-                out.extend(bytes.iter().map(|&b| WINDOWS_1252[b as usize]))
-            }
+            ByteCharset::Windows1252 => out.extend(bytes.iter().map(|&b| WINDOWS_1252[b as usize])),
             ByteCharset::Utf8 | ByteCharset::Utf8OrLatin1 | ByteCharset::Utf8OrWindows1252 => {
                 for &b in bytes {
                     self.utf8_byte(b, out);

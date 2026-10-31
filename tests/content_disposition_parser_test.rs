@@ -89,7 +89,8 @@ fn test_parse_multiple_parameters() {
 #[test]
 fn test_parse_rfc2047_encoded_filename() {
     let cd =
-        ContentDispositionParser::parse_str("attachment; filename=\"=?UTF-8?B?dGVzdC50eHQ=?=\"").unwrap();
+        ContentDispositionParser::parse_str("attachment; filename=\"=?UTF-8?B?dGVzdC50eHQ=?=\"")
+            .unwrap();
     assert_eq!(cd.get_parameter("filename"), Some("test.txt"));
 }
 
@@ -106,7 +107,10 @@ fn test_parse_filename_with_path() {
         "attachment; filename=\"C:\\\\Users\\\\test\\\\document.pdf\"",
     )
     .unwrap();
-    assert_eq!(cd.get_parameter("filename"), Some("C:\\Users\\test\\document.pdf"));
+    assert_eq!(
+        cd.get_parameter("filename"),
+        Some("C:\\Users\\test\\document.pdf")
+    );
 }
 
 #[test]

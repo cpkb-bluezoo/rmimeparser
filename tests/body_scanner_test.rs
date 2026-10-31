@@ -17,11 +17,13 @@ impl Log {
     fn flush(&mut self) {
         if !self.body.is_empty() {
             let b = std::mem::take(&mut self.body);
-            self.events.push(format!("body {:?}", String::from_utf8_lossy(&b)));
+            self.events
+                .push(format!("body {:?}", String::from_utf8_lossy(&b)));
         }
         if !self.unexpected.is_empty() {
             let b = std::mem::take(&mut self.unexpected);
-            self.events.push(format!("unexpected {:?}", String::from_utf8_lossy(&b)));
+            self.events
+                .push(format!("unexpected {:?}", String::from_utf8_lossy(&b)));
         }
     }
 }
@@ -63,7 +65,11 @@ impl MimeHandler for Log {
 fn drive(p: &mut MimeParser<&mut Log>, capacity: usize, chunks: &[&[u8]]) -> ParseResult<()> {
     let mut ring = LoopBuf::with_capacity(capacity);
     for chunk in chunks {
-        assert_eq!(ring.extend_from_slice(chunk), chunk.len(), "the ring holds the chunk");
+        assert_eq!(
+            ring.extend_from_slice(chunk),
+            chunk.len(),
+            "the ring holds the chunk"
+        );
         p.receive(&mut ring)?;
     }
     p.close(&mut ring)
@@ -105,7 +111,11 @@ fn assert_chunk_invariant(raw: &[u8]) -> Vec<String> {
 }
 
 fn bodies(events: &[String]) -> Vec<String> {
-    events.iter().filter(|e| e.starts_with("body")).cloned().collect()
+    events
+        .iter()
+        .filter(|e| e.starts_with("body"))
+        .cloned()
+        .collect()
 }
 
 const MP: &str = "Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n";
@@ -115,8 +125,15 @@ fn simple_parts_with_preamble_and_epilogue() {
     let raw = format!("{MP}preamble\r\n--XX\r\nContent-Type: text/plain\r\n\r\none\r\ntwo\r\n--XX\r\n\r\nthree\r\n--XX--\r\nepilogue\r\n");
     let ev = assert_chunk_invariant(raw.as_bytes());
     assert_eq!(bodies(&ev), vec!["body \"one\\r\\ntwo\"", "body \"three\""]);
-    assert!(ev.contains(&"unexpected \"preamble\"".to_string()), "{ev:?}");
-    assert!(ev.iter().any(|e| e.starts_with("unexpected") && e.contains("epilogue")), "{ev:?}");
+    assert!(
+        ev.contains(&"unexpected \"preamble\"".to_string()),
+        "{ev:?}"
+    );
+    assert!(
+        ev.iter()
+            .any(|e| e.starts_with("unexpected") && e.contains("epilogue")),
+        "{ev:?}"
+    );
 }
 
 #[test]
@@ -156,7 +173,10 @@ fn empty_part_and_back_to_back_boundaries() {
 fn nested_multipart() {
     let raw = "Content-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n--inner\r\n\r\nplain\r\n--inner\r\n\r\nhtml\r\n--inner--\r\n--outer\r\n\r\nlast\r\n--outer--\r\n";
     let ev = assert_chunk_invariant(raw.as_bytes());
-    assert_eq!(bodies(&ev), vec!["body \"plain\"", "body \"html\"", "body \"last\""]);
+    assert_eq!(
+        bodies(&ev),
+        vec!["body \"plain\"", "body \"html\"", "body \"last\""]
+    );
 }
 
 #[test]
@@ -165,12 +185,17 @@ fn quoted_printable_part_with_soft_breaks() {
         "{MP}--XX\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nsoft=\r\nbreak =3D ok=\r\n--XX\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nline one\r\nline two\r\n--XX--\r\n"
     );
     let ev = assert_chunk_invariant(raw.as_bytes());
-    assert_eq!(bodies(&ev), vec!["body \"softbreak = ok\"", "body \"line one\\r\\nline two\""]);
+    assert_eq!(
+        bodies(&ev),
+        vec!["body \"softbreak = ok\"", "body \"line one\\r\\nline two\""]
+    );
 }
 
 #[test]
 fn quoted_printable_hard_line_break_encoded_at_the_end_is_data() {
-    let raw = format!("{MP}--XX\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nend=0D=0A\r\n--XX--\r\n");
+    let raw = format!(
+        "{MP}--XX\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nend=0D=0A\r\n--XX--\r\n"
+    );
     let ev = assert_chunk_invariant(raw.as_bytes());
     assert_eq!(bodies(&ev), vec!["body \"end\\r\\n\""]);
 }
@@ -198,7 +223,10 @@ fn base64_parts_with_odd_line_lengths_and_binary_tail() {
 fn non_multipart_bodies_in_any_chunking() {
     let raw = "Content-Type: text/plain\r\n\r\nline one\r\n--not a boundary\r\n\r\nlast line without ending";
     let ev = assert_chunk_invariant(raw.as_bytes());
-    assert_eq!(bodies(&ev), vec!["body \"line one\\r\\n--not a boundary\\r\\n\\r\\nlast line without ending\""]);
+    assert_eq!(
+        bodies(&ev),
+        vec!["body \"line one\\r\\n--not a boundary\\r\\n\\r\\nlast line without ending\""]
+    );
 }
 
 #[test]
@@ -208,7 +236,10 @@ fn long_unterminated_header_line_is_rejected_early() {
     let long = vec![b'a'; 5000];
     let mut ring = LoopBuf::with_capacity(8192);
     ring.extend_from_slice(&long);
-    assert!(p.receive(&mut ring).is_err(), "no need to wait for a newline");
+    assert!(
+        p.receive(&mut ring).is_err(),
+        "no need to wait for a newline"
+    );
 }
 
 #[test]
@@ -247,9 +278,27 @@ fn run_result(chunks: &[&[u8]]) -> (Vec<String>, bool) {
 #[test]
 fn random_multipart_bodies_are_chunk_invariant() {
     let frags: [&str; 22] = [
-        "--XX", "--XX--", "--X", "-", "--", "---", "\r\n", "\n", "\r", "text", " ", "=\r\n",
-        "=3D", "QUJD", "REVG", "=", "\r\n--XX\r\n", "\r\n--XX--\r\n", "Content-Type: text/plain\r\n\r\n",
-        "Content-Transfer-Encoding: base64\r\n\r\n", "Content-Transfer-Encoding: quoted-printable\r\n\r\n",
+        "--XX",
+        "--XX--",
+        "--X",
+        "-",
+        "--",
+        "---",
+        "\r\n",
+        "\n",
+        "\r",
+        "text",
+        " ",
+        "=\r\n",
+        "=3D",
+        "QUJD",
+        "REVG",
+        "=",
+        "\r\n--XX\r\n",
+        "\r\n--XX--\r\n",
+        "Content-Type: text/plain\r\n\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\n",
+        "Content-Transfer-Encoding: quoted-printable\r\n\r\n",
         "begin 644 f\r\n#0V%T\r\n`\r\nend\r\n",
     ];
     let mut state = 0x9E3779B9u32;
@@ -276,10 +325,19 @@ fn random_multipart_bodies_are_chunk_invariant() {
         let expected = run_result(&[&raw]);
         for cut in 1..raw.len() {
             let got = run_result(&[&raw[..cut], &raw[cut..]]);
-            assert_eq!(got, expected, "round {round} cut {cut}: {:?}", String::from_utf8_lossy(&raw));
+            assert_eq!(
+                got,
+                expected,
+                "round {round} cut {cut}: {:?}",
+                String::from_utf8_lossy(&raw)
+            );
         }
         let ones: Vec<&[u8]> = raw.chunks(1).collect();
-        assert_eq!(run_result(&ones), expected, "round {round} one byte at a time");
+        assert_eq!(
+            run_result(&ones),
+            expected,
+            "round {round} one byte at a time"
+        );
     }
 }
 
@@ -314,7 +372,11 @@ Content-Transfer-Encoding: base64\r\n\r\nQUJDREVGR0hJSktMTU5PUA==\r\n--XX\r\n\r\
     // The longest line is 77 bytes; every capacity from there is a different wrap.
     for capacity in [80usize, 81, 90, 97, 128, 250] {
         for step in [1usize, 2, 3, 7, 13, 29] {
-            assert_eq!(run_wrapping(raw, capacity, step), expected, "capacity {capacity}, step {step}");
+            assert_eq!(
+                run_wrapping(raw, capacity, step),
+                expected,
+                "capacity {capacity}, step {step}"
+            );
         }
     }
 }

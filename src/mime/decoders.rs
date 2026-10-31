@@ -297,7 +297,12 @@ impl UuencodeDecoder {
         decode_uuencode(src, dst, max, false)
     }
 
-    pub fn decode_eos(src: &mut &[u8], dst: &mut Vec<u8>, max: usize, end_of_stream: bool) -> usize {
+    pub fn decode_eos(
+        src: &mut &[u8],
+        dst: &mut Vec<u8>,
+        max: usize,
+        end_of_stream: bool,
+    ) -> usize {
         decode_uuencode(src, dst, max, end_of_stream)
     }
 }
@@ -312,7 +317,12 @@ pub fn estimate_uuencode_decoded_size(encoded_size: usize) -> usize {
 /// terminator is left in `src` for the next call unless `end_of_stream`.
 /// `begin`, `end`, blank and zero-length lines are skipped. Returns the
 /// number of input bytes consumed.
-pub fn decode_uuencode(src: &mut &[u8], dst: &mut Vec<u8>, max: usize, end_of_stream: bool) -> usize {
+pub fn decode_uuencode(
+    src: &mut &[u8],
+    dst: &mut Vec<u8>,
+    max: usize,
+    end_of_stream: bool,
+) -> usize {
     let dst_limit = dst.len().saturating_add(max);
     let mut pos = 0usize;
     let data = *src;

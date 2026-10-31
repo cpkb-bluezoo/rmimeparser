@@ -62,8 +62,14 @@ fn an_encoded_word_after_a_stray_start_is_found() {
 /// and gives mojibake; the stream reads each as what it is.
 #[test]
 fn raw_utf8_next_to_an_encoded_word_is_read_as_utf8() {
-    assert_eq!(stream(&[b"mixed \xc3\xa9 and =?utf-8?q?=C3=A9?="], false), "mixed \u{e9} and \u{e9}");
-    assert_eq!(stream(&[b"mixed \xe9 and =?utf-8?q?=C3=A9?="], false), "mixed \u{e9} and \u{e9}");
+    assert_eq!(
+        stream(&[b"mixed \xc3\xa9 and =?utf-8?q?=C3=A9?="], false),
+        "mixed \u{e9} and \u{e9}"
+    );
+    assert_eq!(
+        stream(&[b"mixed \xe9 and =?utf-8?q?=C3=A9?="], false),
+        "mixed \u{e9} and \u{e9}"
+    );
 }
 
 #[test]
@@ -94,7 +100,12 @@ fn the_chunking_does_not_matter() {
                 );
             }
             let ones: Vec<&[u8]> = sample.chunks(1).collect();
-            assert_eq!(stream(&ones, smtp_utf8), whole, "{:?} byte by byte", String::from_utf8_lossy(sample));
+            assert_eq!(
+                stream(&ones, smtp_utf8),
+                whole,
+                "{:?} byte by byte",
+                String::from_utf8_lossy(sample)
+            );
         }
     }
 }

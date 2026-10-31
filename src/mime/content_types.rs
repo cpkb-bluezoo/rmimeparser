@@ -126,10 +126,7 @@ pub struct ContentDisposition {
 }
 
 impl ContentDisposition {
-    pub fn new(
-        disposition_type: impl Into<String>,
-        parameters: Option<Vec<Parameter>>,
-    ) -> Self {
+    pub fn new(disposition_type: impl Into<String>, parameters: Option<Vec<Parameter>>) -> Self {
         let disposition_type = disposition_type.into();
         let parameters = non_empty(parameters);
         Self {
@@ -143,8 +140,7 @@ impl ContentDisposition {
     }
 
     pub fn is_disposition_type(&self, disposition_type: &str) -> bool {
-        self.disposition_type
-            .eq_ignore_ascii_case(disposition_type)
+        self.disposition_type.eq_ignore_ascii_case(disposition_type)
     }
 
     pub fn parameters(&self) -> Option<&[Parameter]> {

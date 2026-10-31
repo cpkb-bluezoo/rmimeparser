@@ -1,8 +1,8 @@
 //! MIME Content-ID parser.
 
+use super::message_id_parser::MessageIdParser;
 use crate::buffer::ByteCursor;
 use crate::charset::HeaderCharset;
-use super::message_id_parser::MessageIdParser;
 
 use super::content_types::ContentId;
 

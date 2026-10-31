@@ -52,10 +52,9 @@ fn test_parse_email_address_list_multiple() {
 
 #[test]
 fn test_parse_group_address() {
-    let addrs = EmailAddressParser::parse_email_address_list(
-        "Team: user1@example.com, user2@example.com;",
-    )
-    .unwrap();
+    let addrs =
+        EmailAddressParser::parse_email_address_list("Team: user1@example.com, user2@example.com;")
+            .unwrap();
     assert_eq!(addrs.len(), 1);
     match &addrs[0] {
         Address::Group(group) => {

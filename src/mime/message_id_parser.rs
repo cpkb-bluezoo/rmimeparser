@@ -3,9 +3,9 @@
 //! The `msg-id` grammar is RFC 5322's, but Content-ID (RFC 2045) uses it too, so
 //! it lives with MIME and the RFC 5322 layer re-exports it.
 
+use super::content_types::ContentId;
 use crate::buffer::ByteCursor;
 use crate::charset::{decode_slice, HeaderCharset};
-use super::content_types::ContentId;
 
 /// Message-ID parser.
 pub struct MessageIdParser;
@@ -35,8 +35,7 @@ impl MessageIdParser {
                 break;
             }
             let at_index = value.position();
-            let mut local_cursor =
-                ByteCursor::from_slice(value.bytes(), start_local, at_index);
+            let mut local_cursor = ByteCursor::from_slice(value.bytes(), start_local, at_index);
             let local_part = decode_slice(&mut local_cursor, charset);
             value.advance(1);
             let start_domain = value.position();
@@ -44,8 +43,7 @@ impl MessageIdParser {
                 break;
             }
             let gt_index = value.position();
-            let mut domain_cursor =
-                ByteCursor::from_slice(value.bytes(), start_domain, gt_index);
+            let mut domain_cursor = ByteCursor::from_slice(value.bytes(), start_domain, gt_index);
             let domain = decode_slice(&mut domain_cursor, charset);
             value.advance(1);
             if !is_valid_id_left(&local_part, smtp_utf8) || !is_valid_id_right(&domain, smtp_utf8) {
@@ -146,8 +144,12 @@ fn is_atext(c: char, smtp_utf8: bool) -> bool {
     if smtp_utf8 && c > '\u{007F}' {
         return true;
     }
-    c > ' ' && c < '\u{007F}'
-        && !matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | ':' | ';' | '@' | '\\' | ',' | '"')
+    c > ' '
+        && c < '\u{007F}'
+        && !matches!(
+            c,
+            '(' | ')' | '<' | '>' | '[' | ']' | ':' | ';' | '@' | '\\' | ',' | '"'
+        )
 }
 
 fn is_dtext(c: char, smtp_utf8: bool) -> bool {

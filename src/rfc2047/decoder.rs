@@ -1,7 +1,7 @@
 //! RFC 2047 encoded-word decoder.
 
 use crate::buffer::ByteCursor;
-use crate::charset::{self, HeaderCharset, base64};
+use crate::charset::{self, base64, HeaderCharset};
 
 /// RFC 2047 encoded-word decoder.
 pub struct Decoder;
@@ -161,10 +161,7 @@ impl Decoder {
         }
         let raw = decode_buffer_segment(input.bytes(), start, end, charset);
         let mut decoded = Self::decode_encoded_words_owned(raw);
-        if decoded.len() >= 2
-            && decoded.starts_with('"')
-            && decoded.ends_with('"')
-        {
+        if decoded.len() >= 2 && decoded.starts_with('"') && decoded.ends_with('"') {
             decoded.pop();
             decoded.remove(0);
         }
@@ -329,10 +326,7 @@ pub(crate) fn decode_single_encoded_word(
     } else {
         return Err(());
     };
-    Ok(charset::decode_bytes_named(
-        &decoded_bytes,
-        charset,
-    ))
+    Ok(charset::decode_bytes_named(&decoded_bytes, charset))
 }
 
 fn decode_q_encoding(encoded: &str) -> Result<Vec<u8>, ()> {
@@ -375,7 +369,10 @@ fn decode_q_ascii(bytes: &[u8]) -> Vec<u8> {
             result.push(b' ');
             i += 1;
         } else if b == b'=' && i + 2 < bytes.len() {
-            match (charset::hex_value(bytes[i + 1]), charset::hex_value(bytes[i + 2])) {
+            match (
+                charset::hex_value(bytes[i + 1]),
+                charset::hex_value(bytes[i + 2]),
+            ) {
                 (Some(h), Some(l)) => {
                     result.push((h << 4) | l);
                     i += 3;
@@ -403,9 +400,7 @@ fn is_adjacent(input: &str, prev: &EncodedWord<'_>, current: &EncodedWord<'_>) -
     if prev.end >= current.start {
         return false;
     }
-    input[prev.end..current.start]
-        .chars()
-        .all(is_whitespace)
+    input[prev.end..current.start].chars().all(is_whitespace)
 }
 
 fn is_whitespace(c: char) -> bool {
@@ -473,10 +468,7 @@ fn find_next_fold(bytes: &[u8], from: usize, stop: usize) -> Option<usize> {
 }
 
 fn skip_fold(bytes: &[u8], fold_start: usize, limit: usize) -> usize {
-    if fold_start + 2 <= limit
-        && bytes[fold_start] == b'\r'
-        && bytes[fold_start + 1] == b'\n'
-    {
+    if fold_start + 2 <= limit && bytes[fold_start] == b'\r' && bytes[fold_start + 1] == b'\n' {
         return fold_start + 2;
     }
     if fold_start + 1 < limit && bytes[fold_start] == b'\n' {

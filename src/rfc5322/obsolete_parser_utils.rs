@@ -55,16 +55,11 @@ impl ObsoleteParserUtils {
         let mut segment_start = value.position();
         let mut pos = segment_start;
         while pos <= limit {
-            let b = if pos < limit {
-                value.get(pos)
-            } else {
-                b' '
-            };
+            let b = if pos < limit { value.get(pos) } else { b' ' };
             let is_sep = matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b',');
             if is_sep || pos == limit {
                 if pos > segment_start {
-                    let mut segment =
-                        ByteCursor::from_slice(value.bytes(), segment_start, pos);
+                    let mut segment = ByteCursor::from_slice(value.bytes(), segment_start, pos);
                     let part = decode_slice(&mut segment, charset);
                     if !part.trim().is_empty() {
                         if let Some(id) = parse_obsolete_message_id(&part) {
@@ -158,10 +153,7 @@ fn parse_basic_email_address(email_address: &str) -> Option<EmailAddress> {
 
 fn clean_display_name(display_name: &str) -> String {
     let mut display_name = display_name.trim().to_string();
-    if display_name.len() >= 2
-        && display_name.starts_with('"')
-        && display_name.ends_with('"')
-    {
+    if display_name.len() >= 2 && display_name.starts_with('"') && display_name.ends_with('"') {
         display_name = display_name[1..display_name.len() - 1].to_string();
     }
     display_name
@@ -213,8 +205,7 @@ fn parse_basic_message_id(message_id: &str) -> Option<ContentId> {
 
 fn is_valid_local_part(local_part: &str) -> bool {
     local_part.chars().all(|c| {
-        c.is_ascii_alphanumeric()
-            || matches!(c, '.' | '-' | '_' | '+' | '=' | '#' | '$' | '%')
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+' | '=' | '#' | '$' | '%')
     })
 }
 

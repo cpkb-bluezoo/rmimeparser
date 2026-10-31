@@ -15,8 +15,16 @@ fn decode_header_bytes_trims_like_str_trim_on_latin1_text() {
                 data.extend_from_slice(c);
                 data.extend_from_slice(r);
                 let reference: String = data.iter().map(|&b| b as char).collect();
-                assert_eq!(decode_header_bytes(&data, true, true), reference.trim(), "{data:?}");
-                assert_eq!(decode_header_bytes(&data, true, false), reference, "{data:?}");
+                assert_eq!(
+                    decode_header_bytes(&data, true, true),
+                    reference.trim(),
+                    "{data:?}"
+                );
+                assert_eq!(
+                    decode_header_bytes(&data, true, false),
+                    reference,
+                    "{data:?}"
+                );
             }
         }
     }
@@ -25,7 +33,14 @@ fn decode_header_bytes_trims_like_str_trim_on_latin1_text() {
 #[test]
 fn plain_ascii_header_values_decode_to_themselves() {
     for v in [
-        "Hello, world", "  padded  ", "a=b", "x?=y", "100% sure", "with\0nul", "=", "?",
+        "Hello, world",
+        "  padded  ",
+        "a=b",
+        "x?=y",
+        "100% sure",
+        "with\0nul",
+        "=",
+        "?",
         "from mail.example.com (mail.example.com [192.0.2.1]) by mx; Tue, 6 Oct 2026",
     ] {
         for smtp_utf8 in [false, true] {
@@ -58,6 +73,10 @@ fn q_encoding_of_ascii_text() {
         ("=?UTF-8?Q?end=?=", "end="),
         ("=?UTF-8?Q?=C3=A9?=", "é"),
     ] {
-        assert_eq!(Rfc2047Decoder::decode_encoded_words(word), expected, "{word}");
+        assert_eq!(
+            Rfc2047Decoder::decode_encoded_words(word),
+            expected,
+            "{word}"
+        );
     }
 }

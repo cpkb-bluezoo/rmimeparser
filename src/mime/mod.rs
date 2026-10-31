@@ -1,7 +1,7 @@
 pub mod collectors;
-pub mod content_types;
 pub mod content_id_parser;
 pub mod content_type_parser;
+pub mod content_types;
 pub mod decoders;
 pub mod encoders;
 pub mod error;
@@ -18,31 +18,27 @@ pub mod wire_sink;
 pub mod write_error;
 pub mod writer;
 
-pub use content_types::{
-    ContentDisposition, ContentId, ContentType, MimeVersion,
-};
-pub use content_type_parser::{ContentDispositionParser, ContentTypeParser};
-pub use collectors::{
-    ContentDispositionCollector, ContentTypeCollector, ParameterCollector,
-};
+pub use collectors::{ContentDispositionCollector, ContentTypeCollector, ParameterCollector};
 pub use content_id_parser::ContentIdParser;
-pub use message_id_parser::MessageIdParser;
+pub use content_type_parser::{ContentDispositionParser, ContentTypeParser};
+pub use content_types::{ContentDisposition, ContentId, ContentType, MimeVersion};
 pub use decoders::{
     decode_base64, decode_quoted_printable, decode_uuencode, estimate_base64_decoded_size,
     estimate_qp_decoded_size, estimate_uuencode_decoded_size, Base64Decoder,
     QuotedPrintableDecoder, UuencodeDecoder, BASE64_MAX_LINE_LENGTH, UUENCODE_LINE_BYTES,
 };
 pub use encoders::{
-    encode_base64, encode_quoted_printable, encode_uuencode, Base64Encoder,
-    QuotedPrintableEncoder, UuencodeEncoder,
+    encode_base64, encode_quoted_printable, encode_uuencode, Base64Encoder, QuotedPrintableEncoder,
+    UuencodeEncoder,
 };
 pub use error::{ParseError, ParseResult};
 pub use folding::{write_folded_header, HARD_LINE_LIMIT, SOFT_LINE_LIMIT};
 pub use handler::{DefaultHandler, Handler, HeaderDelivery, Locator, MimeHandler};
 pub use limits::ParserLimits;
-pub use parser::{check_boundary, BoundaryMatch, MimeParser};
+pub use message_id_parser::MessageIdParser;
 pub use messages::MIMEMessages;
 pub use parameter::Parameter;
+pub use parser::{check_boundary, BoundaryMatch, MimeParser};
 pub use utils::{
     decode_header_bytes, decode_slice, decode_token_header_value, index_of, is_special, is_token,
     is_valid_boundary, MIMEUtils,

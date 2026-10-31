@@ -74,7 +74,8 @@ impl MimeHandler for TestHandler {
 
     fn end_content_disposition(&mut self) -> ParseResult<()> {
         let disposition = self.disposition_collector.finish();
-        self.events.push(format!("contentDisposition:{disposition}"));
+        self.events
+            .push(format!("contentDisposition:{disposition}"));
         self.content_disposition = Some(disposition);
         Ok(())
     }
@@ -99,7 +100,8 @@ impl MimeHandler for TestHandler {
     }
 
     fn malformed_header(&mut self, name: &str, reason: &str) -> ParseResult<()> {
-        self.malformed.push((name.to_string(), reason.to_string(), String::new()));
+        self.malformed
+            .push((name.to_string(), reason.to_string(), String::new()));
         self.in_malformed = true;
         Ok(())
     }
@@ -174,10 +176,7 @@ fn parse_with_compact(parser: &mut Parser<'_>, chunks: &[&[u8]]) -> ParseResult<
         ring.extend_from_slice(chunk);
         parser.receive(&mut ring)?;
     }
-    assert!(
-        !parser.is_underflow(),
-        "Parser has unconsumed data at EOF"
-    );
+    assert!(!parser.is_underflow(), "Parser has unconsumed data at EOF");
     parser.close(&mut ring)
 }
 
@@ -246,10 +245,7 @@ fn test_content_transfer_encoding() {
     let mut parser = MimeParser::new(&mut handler);
     parse(&mut parser, content).unwrap();
 
-    assert_eq!(
-        handler.content_transfer_encoding.as_deref(),
-        Some("base64")
-    );
+    assert_eq!(handler.content_transfer_encoding.as_deref(), Some("base64"));
 }
 
 #[test]
@@ -439,7 +435,8 @@ fn test_every_unknown_header_is_delivered_unstructured_and_the_mime_ones_are_not
 
 #[test]
 fn test_unstructured_header_arrives_the_same_whatever_the_chunking() {
-    let msg = "Subject: =?UTF-8?B?Y2Fmw6k=?= =?UTF-8?Q?_au_lait?=\r\n and more\r\n text\r\n\r\nbody";
+    let msg =
+        "Subject: =?UTF-8?B?Y2Fmw6k=?= =?UTF-8?Q?_au_lait?=\r\n and more\r\n text\r\n\r\nbody";
     let mut expected = None;
     for step in [1usize, 2, 3, 5, 11, 1000] {
         let mut handler = TestHandler::new();
@@ -476,7 +473,11 @@ fn test_reset() {
     let mut parser = MimeParser::new(&mut handler);
     parse(&mut parser, "Content-Type: text/html\r\n\r\n<p>Second</p>").unwrap();
     assert_eq!(handler.entity_count, 1);
-    assert!(handler.content_type.as_ref().unwrap().is_mime_type("text", "html"));
+    assert!(handler
+        .content_type
+        .as_ref()
+        .unwrap()
+        .is_mime_type("text", "html"));
 }
 
 #[test]
@@ -583,7 +584,8 @@ fn test_split_folded_header_mid_continuation() {
 
 #[test]
 fn test_split_boundary_dashes() {
-    let content = "Content-Type: multipart/mixed; boundary=abc\r\n\r\n--abc\r\n\r\nPart1\r\n--abc--\r\n";
+    let content =
+        "Content-Type: multipart/mixed; boundary=abc\r\n\r\n--abc\r\n\r\nPart1\r\n--abc--\r\n";
     let boundary_start = content.find("--abc").unwrap();
     let mut handler = TestHandler::new();
     let mut parser = MimeParser::new(&mut handler);
@@ -610,7 +612,8 @@ fn test_split_boundary_text() {
 
 #[test]
 fn test_split_end_boundary_marker() {
-    let content = "Content-Type: multipart/mixed; boundary=abc\r\n\r\n--abc\r\n\r\nPart\r\n--abc--\r\n";
+    let content =
+        "Content-Type: multipart/mixed; boundary=abc\r\n\r\n--abc\r\n\r\nPart\r\n--abc--\r\n";
     let end_boundary = content.rfind("--abc--").unwrap();
     let mut handler = TestHandler::new();
     let mut parser = MimeParser::new(&mut handler);
@@ -619,15 +622,13 @@ fn test_split_end_boundary_marker() {
     parse_with_compact(&mut parser, &chunk_refs).unwrap();
 
     assert_eq!(handler.entity_count, 2);
-    assert!(handler
-        .events
-        .iter()
-        .any(|e| e.contains("endEntity:abc")));
+    assert!(handler.events.iter().any(|e| e.contains("endEntity:abc")));
 }
 
 #[test]
 fn test_split_boundary_crlf() {
-    let content = "Content-Type: multipart/mixed; boundary=abc\r\n\r\n--abc\r\n\r\nPart1\r\n--abc--\r\n";
+    let content =
+        "Content-Type: multipart/mixed; boundary=abc\r\n\r\n--abc\r\n\r\nPart1\r\n--abc--\r\n";
     let after_boundary = content.find("--abc").unwrap() + 5;
     let mut handler = TestHandler::new();
     let mut parser = MimeParser::new(&mut handler);
@@ -835,7 +836,10 @@ impl MimeHandler for RawTaker {
 
 #[test]
 fn test_a_header_asked_for_raw_arrives_undecoded_and_unfolded() {
-    let mut taker = RawTaker { raw: Vec::new(), unstructured: Vec::new() };
+    let mut taker = RawTaker {
+        raw: Vec::new(),
+        unstructured: Vec::new(),
+    };
     let mut parser = MimeParser::new(&mut taker);
     let msg = "Other: x\r\nX-Raw: =?UTF-8?Q?a?=,  b\r\n\t\"c, d\"\r\n\r\nbody";
     let mut ring = LoopBuf::with_capacity(msg.len() + 64);
@@ -850,7 +854,10 @@ fn test_a_header_asked_for_raw_arrives_undecoded_and_unfolded() {
 
 #[test]
 fn test_a_header_taken_raw_is_not_limited_by_the_parser_whoever_takes_it_bounds_it() {
-    let mut taker = RawTaker { raw: Vec::new(), unstructured: Vec::new() };
+    let mut taker = RawTaker {
+        raw: Vec::new(),
+        unstructured: Vec::new(),
+    };
     let mut parser = MimeParser::new(&mut taker);
     parser.limits_mut().max_element_length = Some(20);
     let msg = format!("X-Raw: {}\r\n\r\n", "a".repeat(40));
@@ -919,14 +926,24 @@ fn test_the_multipart_boundary_comes_from_the_streamed_parameter() {
     let msg = "Content-Type: multipart/mixed;\r\n boundary=\"split-here\"\r\n\r\n--split-here\r\n\r\npart\r\n--split-here--\r\n";
     for step in [1usize, 4, 1000] {
         let h = parse_chunked(msg, step);
-        assert!(h.events.iter().any(|e| e == "startEntity:split-here"), "step {step}: {:?}", h.events);
+        assert!(
+            h.events.iter().any(|e| e == "startEntity:split-here"),
+            "step {step}: {:?}",
+            h.events
+        );
     }
     // not multipart: a boundary parameter means nothing
-    let h = parse_chunked("Content-Type: text/plain; boundary=x\r\n\r\n--x\r\nbody", 1000);
+    let h = parse_chunked(
+        "Content-Type: text/plain; boundary=x\r\n\r\n--x\r\nbody",
+        1000,
+    );
     assert!(!h.events.iter().any(|e| e.starts_with("startEntity:x")));
     // an invalid boundary (too long) is not used
     let long = "b".repeat(71);
-    let h = parse_chunked(&format!("Content-Type: multipart/mixed; boundary={long}\r\n\r\n--{long}\r\nx"), 1000);
+    let h = parse_chunked(
+        &format!("Content-Type: multipart/mixed; boundary={long}\r\n\r\n--{long}\r\nx"),
+        1000,
+    );
     assert!(!h.events.iter().any(|e| e.starts_with("startEntity:b")));
 }
 
@@ -938,7 +955,10 @@ fn test_a_content_type_that_is_not_valid_is_reported_with_its_text() {
         assert_eq!(h.malformed.len(), 1, "step {step}");
         let (name, reason, text) = &h.malformed[0];
         assert_eq!(name, "Content-Type");
-        assert!(reason.contains("subtype") || reason.contains("type"), "{reason}");
+        assert!(
+            reason.contains("subtype") || reason.contains("type"),
+            "{reason}"
+        );
         // the whole value, as unstructured text
         assert_eq!(text, "text plain; charset=x", "step {step}");
     }
@@ -958,7 +978,8 @@ fn test_the_extended_parameter_says_it_is_extended() {
     struct Seen(Vec<(String, Option<String>)>);
     impl MimeHandler for Seen {
         fn start_parameter(&mut self, name: &str, language: Option<&str>) -> ParseResult<()> {
-            self.0.push((name.to_string(), language.map(str::to_string)));
+            self.0
+                .push((name.to_string(), language.map(str::to_string)));
             Ok(())
         }
     }

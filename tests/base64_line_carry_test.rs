@@ -48,7 +48,11 @@ fn lines_of_six_characters() {
     // "ABCDEFGHI" = QUJDREVGR0hJ
     let raw = format!("{HEAD}QUJDRE\r\nVGR0hJ\r\n");
     for step in [1usize, 3, raw.len()] {
-        assert_eq!(parse_in_chunks(raw.as_bytes(), step), vec![b"ABCDEFGHI".to_vec()], "step {step}");
+        assert_eq!(
+            parse_in_chunks(raw.as_bytes(), step),
+            vec![b"ABCDEFGHI".to_vec()],
+            "step {step}"
+        );
     }
 }
 
@@ -57,7 +61,11 @@ fn lines_of_one_and_two_characters_with_padding() {
     // "ABCDEFGH" = QUJDREVGR0g=
     let raw = format!("{HEAD}Q\r\nU\r\nJD\r\nREVG\r\nR\r\n0g=\r\n");
     for step in [1usize, 2, raw.len()] {
-        assert_eq!(parse_in_chunks(raw.as_bytes(), step), vec![b"ABCDEFGH".to_vec()], "step {step}");
+        assert_eq!(
+            parse_in_chunks(raw.as_bytes(), step),
+            vec![b"ABCDEFGH".to_vec()],
+            "step {step}"
+        );
     }
 }
 
@@ -111,6 +119,10 @@ fn base64_line_longer_than_76_columns_decodes() {
     assert!(one_line.len() > 76);
     let raw = format!("{HEAD}{one_line}\r\n");
     for step in [1usize, 50, raw.len()] {
-        assert_eq!(parse_in_chunks(raw.as_bytes(), step), vec![data.clone()], "step {step}");
+        assert_eq!(
+            parse_in_chunks(raw.as_bytes(), step),
+            vec![data.clone()],
+            "step {step}"
+        );
     }
 }

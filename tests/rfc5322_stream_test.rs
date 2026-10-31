@@ -2,9 +2,7 @@
 //! any size passes through a small ring and nothing is held but one element.
 
 use loopbuf::LoopBuf;
-use rmimeparser::{
-    MessageHandler, MessageParser, MimeHandler, ObsoleteStructureType, ParseResult,
-};
+use rmimeparser::{MessageHandler, MessageParser, MimeHandler, ObsoleteStructureType, ParseResult};
 
 /// Logs the events, and counts the mailboxes and ids.
 #[derive(Default)]
@@ -41,7 +39,8 @@ impl MessageHandler for Log {
     fn mailbox(&mut self, d: Option<&str>, l: &str, dom: &str) -> ParseResult<()> {
         self.mailboxes += 1;
         self.last = Some((l.to_string(), dom.to_string()));
-        self.events.push(format!("mailbox {}|{l}|{dom}", d.unwrap_or("-")));
+        self.events
+            .push(format!("mailbox {}|{l}|{dom}", d.unwrap_or("-")));
         Ok(())
     }
     fn start_group(&mut self, name: &str) -> ParseResult<()> {
@@ -129,7 +128,10 @@ fn a_header_of_thousands_of_addresses_passes_through_a_small_ring_an_address_at_
     assert!(message.len() > 200_000);
     let log = run_small_ring(&message, 2048, 700, Some(100));
     assert_eq!(log.mailboxes, 8001);
-    assert_eq!(log.last, Some(("last".to_string(), "example.org".to_string())));
+    assert_eq!(
+        log.last,
+        Some(("last".to_string(), "example.org".to_string()))
+    );
     assert!(log.events.last().unwrap() == "end");
     assert!(!log.events.iter().any(|e| e.starts_with("malformed")));
 }
@@ -150,7 +152,10 @@ fn a_references_header_of_thousands_of_ids_streams_too() {
     message.push_str("\r\n\r\nbody");
     let log = run_small_ring(&message, 2048, 333, Some(100));
     assert_eq!(log.ids, 6000);
-    assert_eq!(log.last, Some(("id5999".to_string(), "example.org".to_string())));
+    assert_eq!(
+        log.last,
+        Some(("id5999".to_string(), "example.org".to_string()))
+    );
 }
 
 #[test]
@@ -164,7 +169,10 @@ fn the_events_are_the_same_whatever_the_chunking() {
 
 #[test]
 fn a_group_is_a_start_its_members_and_an_end() {
-    let log = run("To: Team: a@x.org, B <b@y.org>;, c@z.org, undisclosed-recipients:;\r\n\r\n", |_| {});
+    let log = run(
+        "To: Team: a@x.org, B <b@y.org>;, c@z.org, undisclosed-recipients:;\r\n\r\n",
+        |_| {},
+    );
     assert_eq!(
         log.events,
         vec![
@@ -183,7 +191,10 @@ fn a_group_is_a_start_its_members_and_an_end() {
 
 #[test]
 fn what_was_read_before_a_bad_element_is_delivered_and_the_rest_is_text() {
-    let log = run("To: a@x.org, Bob <b@y.org>, this is no address, d@w.org\r\n\r\n", |_| {});
+    let log = run(
+        "To: a@x.org, Bob <b@y.org>, this is no address, d@w.org\r\n\r\n",
+        |_| {},
+    );
     assert_eq!(
         log.events,
         vec![
@@ -199,7 +210,10 @@ fn what_was_read_before_a_bad_element_is_delivered_and_the_rest_is_text() {
 #[test]
 fn a_bad_element_inside_a_group_ends_the_group_with_the_header() {
     let log = run("To: Team: a@x.org, nonsense, b@y.org;\r\n\r\n", |_| {});
-    assert_eq!(log.events[..3], ["start To", "group Team", "mailbox -|a|x.org"]);
+    assert_eq!(
+        log.events[..3],
+        ["start To", "group Team", "mailbox -|a|x.org"]
+    );
     assert!(log.events[3].starts_with("malformed To"));
     // no `end group` and no `end`: the failure ended them
     assert!(!log.events.iter().any(|e| e == "end group" || e == "end"));
@@ -210,7 +224,11 @@ fn the_element_limit_reaches_the_rfc5322_layer() {
     let long = "x".repeat(60);
     let message = format!("To: a@x.org, {long} <b@y.org>\r\n\r\n");
     let log = run(&message, |p| p.limits_mut().max_element_length = Some(40));
-    assert!(log.events.iter().any(|e| e.contains("too long")), "{:?}", log.events);
+    assert!(
+        log.events.iter().any(|e| e.contains("too long")),
+        "{:?}",
+        log.events
+    );
     assert_eq!(log.mailboxes, 1);
     // within the limit it is fine
     let log = run(&message, |p| p.limits_mut().max_element_length = Some(200));
@@ -221,7 +239,10 @@ fn the_element_limit_reaches_the_rfc5322_layer() {
 fn smtp_utf8_reads_utf8_names_as_the_grammar_and_otherwise_says_it_is_obsolete() {
     let message = "To: Jos\u{e9} <jose@example.org>\r\n\r\n";
     let log = run(message, |p| p.set_smtp_utf8(true));
-    assert_eq!(log.events, vec!["start To", "mailbox Jos\u{e9}|jose|example.org", "end"]);
+    assert_eq!(
+        log.events,
+        vec!["start To", "mailbox Jos\u{e9}|jose|example.org", "end"]
+    );
     let log = run(message, |_| {});
     assert_eq!(
         log.events,
@@ -237,9 +258,17 @@ fn smtp_utf8_reads_utf8_names_as_the_grammar_and_otherwise_says_it_is_obsolete()
 #[test]
 fn an_encoded_word_cannot_change_the_structure() {
     // decoded, this display name would contain a comma and angle brackets
-    let log = run("To: =?utf-8?q?a=2C_b_=3Cc=40d=3E?= <e@f.org>, g@h.org\r\n\r\n", |_| {});
+    let log = run(
+        "To: =?utf-8?q?a=2C_b_=3Cc=40d=3E?= <e@f.org>, g@h.org\r\n\r\n",
+        |_| {},
+    );
     assert_eq!(
         log.events,
-        vec!["start To", "mailbox a, b <c@d>|e|f.org", "mailbox -|g|h.org", "end"]
+        vec![
+            "start To",
+            "mailbox a, b <c@d>|e|f.org",
+            "mailbox -|g|h.org",
+            "end"
+        ]
     );
 }

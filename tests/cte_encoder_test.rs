@@ -1,6 +1,6 @@
 use rmimeparser::{
-    decode_base64, decode_quoted_printable, encode_base64, encode_quoted_printable,
-    Base64Encoder, QuotedPrintableEncoder, BASE64_MAX_LINE_LENGTH,
+    decode_base64, decode_quoted_printable, encode_base64, encode_quoted_printable, Base64Encoder,
+    QuotedPrintableEncoder, BASE64_MAX_LINE_LENGTH,
 };
 
 fn round_trip_base64(data: &[u8]) {

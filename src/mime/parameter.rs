@@ -20,10 +20,7 @@ impl Parameter {
     }
 
     /// Like Java `Parameter(String, String)` — panics if either argument is `None`.
-    pub fn maybe_new(
-        name: Option<impl Into<String>>,
-        value: Option<impl Into<String>>,
-    ) -> Self {
+    pub fn maybe_new(name: Option<impl Into<String>>, value: Option<impl Into<String>>) -> Self {
         Self::new(
             name.expect("name must not be null"),
             value.expect("value must not be null"),
@@ -43,11 +40,7 @@ impl Parameter {
             if MIMEUtils::is_token(&self.value) {
                 format!("{}={}", self.name, self.value)
             } else {
-                format!(
-                    "{}=\"{}\"",
-                    self.name,
-                    escape_quoted_string(&self.value)
-                )
+                format!("{}=\"{}\"", self.name, escape_quoted_string(&self.value))
             }
         } else {
             format!("{}*=UTF-8''{}", self.name, percent_encode(&self.value))

@@ -8,8 +8,16 @@ fn b64_encode(data: &[u8]) -> String {
     let mut i = 0;
     while i < data.len() {
         let b0 = data[i] as u32;
-        let b1 = if i + 1 < data.len() { data[i + 1] as u32 } else { 0 };
-        let b2 = if i + 2 < data.len() { data[i + 2] as u32 } else { 0 };
+        let b1 = if i + 1 < data.len() {
+            data[i + 1] as u32
+        } else {
+            0
+        };
+        let b2 = if i + 2 < data.len() {
+            data[i + 2] as u32
+        } else {
+            0
+        };
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(TABLE[((n >> 18) & 63) as usize] as char);
         out.push(TABLE[((n >> 12) & 63) as usize] as char);
@@ -374,9 +382,8 @@ fn test_compact_and_continue() {
 
 #[test]
 fn test_strict_mode_accepts_valid_line_length() {
-    let base64_data = b64_encode(
-        b"This is some test data that should encode to a reasonable length.",
-    );
+    let base64_data =
+        b64_encode(b"This is some test data that should encode to a reasonable length.");
     let line = if base64_data.len() > 76 {
         &base64_data[..76]
     } else {

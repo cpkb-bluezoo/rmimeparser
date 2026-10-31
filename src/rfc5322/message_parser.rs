@@ -8,11 +8,11 @@ use loopbuf::LoopBuf;
 use crate::mime::content_types::{ContentId, MimeVersion};
 use crate::mime::error::ParseResult;
 use crate::mime::handler::{HeaderDelivery, Locator, MimeHandler};
-use crate::rfc5322::stream::HeaderStream;
 use crate::mime::limits::ParserLimits;
 use crate::mime::parser::MimeParser;
 use crate::rfc5322::headers;
 use crate::rfc5322::message_handler::MessageHandler;
+use crate::rfc5322::stream::HeaderStream;
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct MessageHeaderState {

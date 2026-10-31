@@ -92,12 +92,14 @@ pub struct ContentDispositionParser;
 impl ContentDispositionParser {
     /// The disposition in `value`, which is consumed. `None` if its type is not
     /// a token.
-    pub fn parse(
-        value: &mut ByteCursor<'_>,
-        charset: HeaderCharset,
-    ) -> Option<ContentDisposition> {
+    pub fn parse(value: &mut ByteCursor<'_>, charset: HeaderCharset) -> Option<ContentDisposition> {
         let mut collect = Collect::default();
-        let valid = run(Kind::ContentDisposition, value.slice(), charset, &mut collect);
+        let valid = run(
+            Kind::ContentDisposition,
+            value.slice(),
+            charset,
+            &mut collect,
+        );
         value.consume_to_limit();
         valid.then(|| collect.disposition.finish())
     }

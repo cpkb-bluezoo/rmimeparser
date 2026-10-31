@@ -133,7 +133,8 @@ fn main() {
     let text = "The quick brown fox jumps over the lazy dog, again and again.\r\n".repeat(150_000);
 
     let mut b64_msg =
-        b"Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n\r\n".to_vec();
+        b"Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+            .to_vec();
     b64_msg.extend_from_slice(&b64);
     let text_msg = format!("Content-Type: text/plain\r\n\r\n{text}").into_bytes();
     let multipart_text = format!(
@@ -152,18 +153,33 @@ fn main() {
     throughput("mime: plain text body", text_msg.len(), 10, || {
         parse_mime(&text_msg);
     });
-    throughput("mime: plain text in multipart", multipart_text.len(), 10, || {
-        parse_mime(&multipart_text);
-    });
-    throughput("mime: base64 attachment in multipart", multipart_b64.len(), 5, || {
-        parse_mime(&multipart_b64);
-    });
+    throughput(
+        "mime: plain text in multipart",
+        multipart_text.len(),
+        10,
+        || {
+            parse_mime(&multipart_text);
+        },
+    );
+    throughput(
+        "mime: base64 attachment in multipart",
+        multipart_b64.len(),
+        5,
+        || {
+            parse_mime(&multipart_b64);
+        },
+    );
     let n = 20_000;
-    throughput("message: 10-header small messages", headers.len() * n, 1, || {
-        for _ in 0..n {
-            parse_message(headers);
-        }
-    });
+    throughput(
+        "message: 10-header small messages",
+        headers.len() * n,
+        1,
+        || {
+            for _ in 0..n {
+                parse_message(headers);
+            }
+        },
+    );
     throughput("encode_base64 to Vec", payload.len(), 5, || {
         let mut o = Vec::with_capacity(11_000_000);
         encode_base64(&mut o, &payload).unwrap();
@@ -172,21 +188,39 @@ fn main() {
         let mut o = Vec::with_capacity(30_000_000);
         encode_quoted_printable(&mut o, &payload).unwrap();
     });
-    throughput("encode_quoted_printable, ASCII text", text.len(), 10, || {
-        let mut o = Vec::with_capacity(text.len() + text.len() / 4);
-        encode_quoted_printable(&mut o, text.as_bytes()).unwrap();
-    });
+    throughput(
+        "encode_quoted_printable, ASCII text",
+        text.len(),
+        10,
+        || {
+            let mut o = Vec::with_capacity(text.len() + text.len() / 4);
+            encode_quoted_printable(&mut o, text.as_bytes()).unwrap();
+        },
+    );
     let mut qp = Vec::new();
     encode_quoted_printable(&mut qp, text.as_bytes()).unwrap();
-    throughput("decode_quoted_printable (mostly ASCII)", qp.len(), 10, || {
-        let mut dst = Vec::with_capacity(qp.len() + 16);
-        let mut s = qp.as_slice();
-        decode_quoted_printable(&mut s, &mut dst, usize::MAX / 2, true);
-    });
-    let list: String = (0..5000).map(|i| format!("User {i} <user{i}@example.org>")).collect::<Vec<_>>().join(", ");
-    throughput("address list (str API), 5000 addresses", list.len(), 20, || {
-        EmailAddressParser::parse_email_address_list(&list).unwrap();
-    });
+    throughput(
+        "decode_quoted_printable (mostly ASCII)",
+        qp.len(),
+        10,
+        || {
+            let mut dst = Vec::with_capacity(qp.len() + 16);
+            let mut s = qp.as_slice();
+            decode_quoted_printable(&mut s, &mut dst, usize::MAX / 2, true);
+        },
+    );
+    let list: String = (0..5000)
+        .map(|i| format!("User {i} <user{i}@example.org>"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    throughput(
+        "address list (str API), 5000 addresses",
+        list.len(),
+        20,
+        || {
+            EmailAddressParser::parse_email_address_list(&list).unwrap();
+        },
+    );
 
     println!("\n-- allocations");
     allocations("MessageParser, 10 headers", || parse_message(headers).calls);
@@ -195,8 +229,12 @@ fn main() {
         let t = "The quick brown fox jumps over the lazy dog, again and again.\r\n".repeat(lines);
         let mp = format!("Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n--XX\r\nContent-Type: text/plain\r\n\r\n{t}\r\n--XX--\r\n");
         let single = format!("Content-Type: text/plain\r\n\r\n{t}");
-        allocations(&format!("multipart text, {lines} lines"), || parse_mime(mp.as_bytes()).calls);
-        allocations(&format!("single-entity text, {lines} lines"), || parse_mime(single.as_bytes()).calls);
+        allocations(&format!("multipart text, {lines} lines"), || {
+            parse_mime(mp.as_bytes()).calls
+        });
+        allocations(&format!("single-entity text, {lines} lines"), || {
+            parse_mime(single.as_bytes()).calls
+        });
     }
     let raw: Vec<u8> = (0..57_000u32).map(|i| i as u8).collect();
     let mut enc = Vec::new();

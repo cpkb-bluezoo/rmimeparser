@@ -82,8 +82,7 @@ impl EmailAddress {
 
 impl PartialEq for EmailAddress {
     fn eq(&self, other: &Self) -> bool {
-        self.local_part == other.local_part
-            && self.domain.eq_ignore_ascii_case(&other.domain)
+        self.local_part == other.local_part && self.domain.eq_ignore_ascii_case(&other.domain)
     }
 }
 

@@ -29,9 +29,7 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> io
     // "Name: "
     let name_prefix_len = name.len() + 2;
     if name_prefix_len > HARD_LINE_LIMIT {
-        return Err(invalid(format!(
-            "header name too long: {name}"
-        )));
+        return Err(invalid(format!("header name too long: {name}")));
     }
 
     let mut out = HeaderBatch::new(out);
@@ -58,9 +56,7 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> io
                 fold_newline(&mut out, &mut line_len)?;
             }
             if line_len + 1 > HARD_LINE_LIMIT {
-                return Err(invalid(
-                    "header line exceeds 998 octets",
-                ));
+                return Err(invalid("header line exceeds 998 octets"));
             }
             out.put(&[b])?;
             line_len += 1;
@@ -69,10 +65,7 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> io
         }
 
         // Prefer folding before this atom if it would exceed the soft limit.
-        if line_len > 0
-            && line_len + atom.len() > SOFT_LINE_LIMIT
-            && line_len >= 2
-        {
+        if line_len > 0 && line_len + atom.len() > SOFT_LINE_LIMIT && line_len >= 2 {
             // Only fold if we are not at the very start of the field value on first line
             // with nothing written yet beyond "Name: ".
             if line_len > name_prefix_len || i > 0 {
@@ -84,9 +77,7 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> io
             // Atom itself is too long for one line — hard-break (except encoded-words,
             // which must not be broken).
             if is_encoded_word(atom) {
-                return Err(invalid(
-                    "encoded-word exceeds maximum header line length",
-                ));
+                return Err(invalid("encoded-word exceeds maximum header line length"));
             }
             let mut offset = 0usize;
             while offset < atom.len() {
@@ -126,9 +117,7 @@ fn validate_header_name(name: &str) -> io::Result<()> {
     }
     for &b in name.as_bytes() {
         if b == b':' || b == b'\r' || b == b'\n' || !(0x21..=0x7e).contains(&b) {
-            return Err(invalid(format!(
-                "invalid header name: {name}"
-            )));
+            return Err(invalid(format!("invalid header name: {name}")));
         }
     }
     Ok(())
@@ -151,10 +140,9 @@ fn next_atom_end(bytes: &[u8]) -> usize {
     while i < bytes.len() && bytes[i] != b' ' && bytes[i] != b'\t' {
         // If we encounter a new encoded-word start mid-run, stop before it so it
         // can be kept intact on the next iteration.
-        if i > 0 && bytes[i..].starts_with(b"=?")
-            && find_encoded_word_end(&bytes[i..]).is_some() {
-                break;
-            }
+        if i > 0 && bytes[i..].starts_with(b"=?") && find_encoded_word_end(&bytes[i..]).is_some() {
+            break;
+        }
         i += 1;
     }
     i

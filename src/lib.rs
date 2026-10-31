@@ -14,22 +14,24 @@ pub use buffer::ByteCursor;
 pub use charset::HeaderCharset;
 pub use dkim::{DkimMessageParser, RawHeader};
 pub use mime::{
-    Base64Decoder, Base64Encoder, ContentDisposition, ContentDispositionParser, ContentId,
-    ContentIdParser, ContentType, ContentTypeParser, DefaultHandler, Handler,
-    ContentDispositionCollector, ContentTypeCollector, HeaderDelivery, Locator, ParameterCollector, MIMEMessages, MimeHandler, MimeParser, MimeVersion, MimeWriter,
-    Parameter, ParseError, ParseResult, ParserLimits, QuotedPrintableDecoder,
-    QuotedPrintableEncoder, MIMEUtils, WriteError, WriteResult, decode_base64, decode_header_bytes, decode_quoted_printable,
-    decode_slice, decode_token_header_value, decode_uuencode, encode_base64,
-    encode_quoted_printable, encode_uuencode, estimate_base64_decoded_size,
-    estimate_qp_decoded_size, estimate_uuencode_decoded_size, index_of, is_special, is_token,
-    is_valid_boundary, write_folded_header, UuencodeDecoder, UuencodeEncoder,
+    decode_base64, decode_header_bytes, decode_quoted_printable, decode_slice,
+    decode_token_header_value, decode_uuencode, encode_base64, encode_quoted_printable,
+    encode_uuencode, estimate_base64_decoded_size, estimate_qp_decoded_size,
+    estimate_uuencode_decoded_size, index_of, is_special, is_token, is_valid_boundary,
+    write_folded_header, Base64Decoder, Base64Encoder, ContentDisposition,
+    ContentDispositionCollector, ContentDispositionParser, ContentId, ContentIdParser, ContentType,
+    ContentTypeCollector, ContentTypeParser, DefaultHandler, Handler, HeaderDelivery, Locator,
+    MIMEMessages, MIMEUtils, MimeHandler, MimeParser, MimeVersion, MimeWriter, Parameter,
+    ParameterCollector, ParseError, ParseResult, ParserLimits, QuotedPrintableDecoder,
+    QuotedPrintableEncoder, UuencodeDecoder, UuencodeEncoder, WriteError, WriteResult,
     BASE64_MAX_LINE_LENGTH, HARD_LINE_LIMIT, SOFT_LINE_LIMIT, UUENCODE_LINE_BYTES,
 };
 pub use rfc2047::{Decoder as Rfc2047Decoder, Encoder as Rfc2047Encoder, HeaderTextDecoder};
 pub use rfc2231::Decoder as Rfc2231Decoder;
 pub use rfc5322::{
-    Address, AddressListCollector, DateTimeParseError, MessageIdListCollector, EmailAddress, EmailAddressParser, GroupEmailAddress, MessageDateTimeFormatter,
-    MessageHandler, MessageIdParser, MessageParser, MessageWriter, ObsoleteParserUtils, ObsoleteStructureType,
+    Address, AddressListCollector, DateTimeParseError, EmailAddress, EmailAddressParser,
+    GroupEmailAddress, MessageDateTimeFormatter, MessageHandler, MessageIdListCollector,
+    MessageIdParser, MessageParser, MessageWriter, ObsoleteParserUtils, ObsoleteStructureType,
     OffsetDateTime,
 };
 

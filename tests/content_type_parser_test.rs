@@ -27,10 +27,8 @@ fn test_parse_with_quoted_parameter() {
 
 #[test]
 fn test_parse_multiple_parameters() {
-    let ct = ContentTypeParser::parse_str(
-        "text/plain; charset=utf-8; format=flowed; delsp=yes",
-    )
-    .unwrap();
+    let ct = ContentTypeParser::parse_str("text/plain; charset=utf-8; format=flowed; delsp=yes")
+        .unwrap();
     assert_eq!(ct.get_parameter("charset"), Some("utf-8"));
     assert_eq!(ct.get_parameter("format"), Some("flowed"));
     assert_eq!(ct.get_parameter("delsp"), Some("yes"));
@@ -46,8 +44,7 @@ fn test_parse_with_whitespace() {
 
 #[test]
 fn test_parse_quoted_parameter_with_escapes() {
-    let ct =
-        ContentTypeParser::parse_str("text/plain; filename=\"test\\\"file\\\\.txt\"").unwrap();
+    let ct = ContentTypeParser::parse_str("text/plain; filename=\"test\\\"file\\\\.txt\"").unwrap();
     assert_eq!(ct.get_parameter("filename"), Some("test\"file\\.txt"));
 }
 

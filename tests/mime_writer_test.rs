@@ -44,8 +44,7 @@ impl MimeHandler for CollectBody {
         if !self.current.is_empty() {
             self.bodies.push(std::mem::take(&mut self.current));
         }
-        self.events
-            .push(format!("end:{}", boundary.unwrap_or("-")));
+        self.events.push(format!("end:{}", boundary.unwrap_or("-")));
         Ok(())
     }
 }
@@ -103,8 +102,11 @@ fn write_base64_chunked_round_trip() {
     {
         let mut w = MimeWriter::new();
         w.start_entity(&mut ring, None).unwrap();
-        w.content_type(&mut ring, &ContentType::new("application", "octet-stream", None))
-            .unwrap();
+        w.content_type(
+            &mut ring,
+            &ContentType::new("application", "octet-stream", None),
+        )
+        .unwrap();
         w.content_transfer_encoding(&mut ring, "base64").unwrap();
         w.end_headers(&mut ring).unwrap();
         for chunk in payload.chunks(13) {
@@ -195,7 +197,9 @@ fn rejects_boundary_in_body() {
     w.content_type(&mut ring, &ContentType::new("text", "plain", None))
         .unwrap();
     w.end_headers(&mut ring).unwrap();
-    assert!(w.body_content(&mut ring, b"hello\r\n--abc\r\nnope").is_err());
+    assert!(w
+        .body_content(&mut ring, b"hello\r\n--abc\r\nnope")
+        .is_err());
 }
 
 #[test]

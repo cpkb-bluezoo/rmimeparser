@@ -131,7 +131,9 @@ fn test_is_valid_boundary_simple() {
 #[test]
 fn test_is_valid_boundary_with_special_chars() {
     assert!(MIMEUtils::is_valid_boundary("----=_Part_123"));
-    assert!(MIMEUtils::is_valid_boundary("----WebKitFormBoundary7MA4YWxkTrZu0gW"));
+    assert!(MIMEUtils::is_valid_boundary(
+        "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+    ));
 }
 
 #[test]

@@ -128,7 +128,8 @@ impl HeaderTextDecoder {
                     self.settle_whitespace();
                     self.started = true;
                     self.after_word = false;
-                    self.out.push_str(std::str::from_utf8(&bytes[i..j]).unwrap());
+                    self.out
+                        .push_str(std::str::from_utf8(&bytes[i..j]).unwrap());
                     i = j;
                     self.flush_if_full(emit)?;
                     continue;

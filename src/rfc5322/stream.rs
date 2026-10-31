@@ -20,9 +20,7 @@ use crate::mime::error::ParseResult;
 use crate::mime::message_id_parser::parse_msg_id_text;
 use crate::rfc2047::HeaderTextDecoder;
 
-use super::email_address_parser::{
-    parse_group_name, parse_mailbox_element, MailboxScratch,
-};
+use super::email_address_parser::{parse_group_name, parse_mailbox_element, MailboxScratch};
 use super::headers::RawKind;
 use super::message_date_time::MessageDateTimeFormatter;
 use super::message_handler::MessageHandler;
@@ -293,7 +291,11 @@ impl HeaderStream {
             if element.is_empty() {
                 None
             } else {
-                Some(parse_mailbox_element(element, self.smtp_utf8, &mut self.scratch))
+                Some(parse_mailbox_element(
+                    element,
+                    self.smtp_utf8,
+                    &mut self.scratch,
+                ))
             }
         };
         let Some(parsed) = parsed else {
@@ -322,7 +324,12 @@ impl HeaderStream {
             }
             None => {
                 let suffix = [delimiter];
-                self.fail(inner, "not a mailbox", b"", &suffix[..(delimiter != 0) as usize])
+                self.fail(
+                    inner,
+                    "not a mailbox",
+                    b"",
+                    &suffix[..(delimiter != 0) as usize],
+                )
             }
         }
     }

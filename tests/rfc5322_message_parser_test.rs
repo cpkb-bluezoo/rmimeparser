@@ -3,8 +3,9 @@ use std::rc::Rc;
 
 use loopbuf::LoopBuf;
 use rmimeparser::{
-    Address, AddressListCollector, ContentId, ContentType, ContentTypeCollector, MessageIdListCollector, EmailAddress, Locator, MessageHandler, MessageParser, MimeHandler,
-    MimeVersion, OffsetDateTime, ParseResult,
+    Address, AddressListCollector, ContentId, ContentType, ContentTypeCollector, EmailAddress,
+    Locator, MessageHandler, MessageIdListCollector, MessageParser, MimeHandler, MimeVersion,
+    OffsetDateTime, ParseResult,
 };
 
 /// Records parser events for verification (gumdrop `MessageParserTest.TestMessageHandler`).
@@ -135,7 +136,6 @@ impl MimeHandler for TestMessageHandler {
 }
 
 impl MessageHandler for TestMessageHandler {
-
     fn date_header(&mut self, name: &str, date: OffsetDateTime) -> ParseResult<()> {
         self.date_headers.insert(name.to_string(), date);
         Ok(())
@@ -350,7 +350,10 @@ fn test_references_header_multiple() {
     let mut handler = TestMessageHandler::new();
     parse(content, &mut handler);
 
-    let ids = handler.message_id_headers.get("References").expect("References");
+    let ids = handler
+        .message_id_headers
+        .get("References")
+        .expect("References");
     assert_eq!(ids.len(), 3);
 }
 
@@ -364,7 +367,10 @@ fn test_subject_header() {
 
     assert!(handler.unstructured_headers.contains_key("Subject"));
     assert_eq!(
-        handler.unstructured_headers.get("Subject").map(String::as_str),
+        handler
+            .unstructured_headers
+            .get("Subject")
+            .map(String::as_str),
         Some("Test email subject")
     );
 }
@@ -451,10 +457,7 @@ This is the message body.\r\n";
     assert!(handler.message_id_headers.contains_key("Message-ID"));
     assert!(handler.mime_version.is_some());
     assert!(handler.content_type.is_some());
-    assert_eq!(
-        handler.body_text().trim(),
-        "This is the message body."
-    );
+    assert_eq!(handler.body_text().trim(), "This is the message body.");
 }
 
 #[test]
@@ -503,7 +506,10 @@ Hello\r\n";
     assert_eq!(handler.date_headers.len(), 1);
     assert_eq!(handler.address_headers.len(), 2);
     assert_eq!(
-        handler.unstructured_headers.get("Subject").map(String::as_str),
+        handler
+            .unstructured_headers
+            .get("Subject")
+            .map(String::as_str),
         Some("Test")
     );
     assert!(handler.body_text().contains("Hello"));
@@ -647,6 +653,16 @@ fn test_long_header_name_is_not_mistaken_for_known_name() {
     let content = "To-Be-Or-Not-To-Be-That-Is-The-Question: x@example.org\r\nCc-And-Then-Some-More-Characters-Here: y\r\nX-A-Very-Long-Custom-Header-Name-Indeed-Yes: hello\r\n\r\nBody";
     let mut handler = TestMessageHandler::new();
     parse(content, &mut handler);
-    assert!(handler.address_headers.is_empty(), "{:?}", handler.address_headers.keys().collect::<Vec<_>>());
-    assert_eq!(handler.unstructured_headers.get("X-A-Very-Long-Custom-Header-Name-Indeed-Yes").map(String::as_str), Some("hello"));
+    assert!(
+        handler.address_headers.is_empty(),
+        "{:?}",
+        handler.address_headers.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        handler
+            .unstructured_headers
+            .get("X-A-Very-Long-Custom-Header-Name-Indeed-Yes")
+            .map(String::as_str),
+        Some("hello")
+    );
 }

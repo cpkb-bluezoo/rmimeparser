@@ -32,7 +32,8 @@ const CORPUS_REPO: &str = "https://github.com/rspamd/rspamd-test-corpus.git";
 ///
 /// Used when a message is known-bad but the automatic structural checks cannot
 /// prove it. Format of [`EXPECTED_ERRORS_FILE`]: one `path<TAB>substring` per line.
-const EXPECTED_ERRORS_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/expected_errors");
+const EXPECTED_ERRORS_FILE: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/expected_errors");
 
 static EXPECTED_ERRORS: OnceLock<HashMap<String, String>> = OnceLock::new();
 

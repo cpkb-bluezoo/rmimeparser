@@ -77,15 +77,7 @@ impl MessageDateTimeFormatter {
         let off_m = (abs % 3600) / 60;
         format!(
             "{}, {} {} {:04} {:02}:{:02}:{:02} {sign}{:02}{:02}",
-            WEEKDAYS[dow],
-            dt.day,
-            month,
-            dt.year,
-            dt.hour,
-            dt.minute,
-            dt.second,
-            off_h,
-            off_m
+            WEEKDAYS[dow], dt.day, month, dt.year, dt.hour, dt.minute, dt.second, off_h, off_m
         )
     }
 
@@ -140,9 +132,7 @@ fn parse_date_time(input: &str, obsolete: bool) -> Result<OffsetDateTime, ()> {
         return Err(());
     };
     skip_ws(bytes, &mut pos);
-    let offset_seconds = if pos < bytes.len()
-        && (bytes[pos] == b'+' || bytes[pos] == b'-')
-    {
+    let offset_seconds = if pos < bytes.len() && (bytes[pos] == b'+' || bytes[pos] == b'-') {
         parse_offset(bytes, &mut pos)?
     } else if obsolete {
         0
@@ -216,12 +206,12 @@ fn parse_offset(bytes: &[u8], pos: &mut usize) -> Result<i32, ()> {
     let sign = if bytes[*pos] == b'-' { -1 } else { 1 };
     *pos += 1;
     let hours = read_number(bytes, pos, 2, 2)?;
-    let minutes = if *pos + 2 <= bytes.len() && bytes[*pos..*pos + 2].iter().all(|b| b.is_ascii_digit())
-    {
-        read_number(bytes, pos, 2, 2)?
-    } else {
-        0
-    };
+    let minutes =
+        if *pos + 2 <= bytes.len() && bytes[*pos..*pos + 2].iter().all(|b| b.is_ascii_digit()) {
+            read_number(bytes, pos, 2, 2)?
+        } else {
+            0
+        };
     Ok(sign * (hours * 3600 + minutes * 60))
 }
 

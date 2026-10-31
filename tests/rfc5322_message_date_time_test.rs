@@ -51,7 +51,8 @@ fn expected() -> OffsetDateTime {
 
 #[test]
 fn test_parse_trailing_comment() {
-    let dt = MessageDateTimeFormatter::parse("Fri, 21 Nov 1997 09:55:06 -0600 (via relay)").unwrap();
+    let dt =
+        MessageDateTimeFormatter::parse("Fri, 21 Nov 1997 09:55:06 -0600 (via relay)").unwrap();
     assert_eq!(dt, expected());
 }
 
@@ -71,6 +72,7 @@ fn test_parse_unterminated_comment_rejected() {
 
 #[test]
 fn test_parse_obsolete_trailing_comment() {
-    let dt = MessageDateTimeFormatter::parse_obsolete("Fri, 21 Nov 1997 09:55:06 CST (EST)").unwrap();
+    let dt =
+        MessageDateTimeFormatter::parse_obsolete("Fri, 21 Nov 1997 09:55:06 CST (EST)").unwrap();
     assert_eq!(dt, expected());
 }

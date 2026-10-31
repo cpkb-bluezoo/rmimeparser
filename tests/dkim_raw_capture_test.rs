@@ -20,10 +20,7 @@ fn parse_message(raw: &[u8]) -> (Vec<RawHeader>, Vec<u8>) {
     let mut input = ring(raw);
     parser.receive(&mut input).unwrap();
     parser.close(&mut input).unwrap();
-    (
-        parser.raw_headers().to_vec(),
-        parser.raw_body().to_vec(),
-    )
+    (parser.raw_headers().to_vec(), parser.raw_body().to_vec())
 }
 
 #[test]
@@ -105,7 +102,10 @@ fn test_dkim_message_parser_lookup_api() {
 
     assert!(parser.is_headers_complete());
     assert!(parser.raw_header("from").is_some());
-    assert_eq!(parser.header_bytes("from").unwrap(), b"From: a@example.com\r\n");
+    assert_eq!(
+        parser.header_bytes("from").unwrap(),
+        b"From: a@example.com\r\n"
+    );
     assert_eq!(parser.all_raw_headers("dkim-signature").len(), 1);
     assert_eq!(parser.raw_body(), b"x\r\n");
 }

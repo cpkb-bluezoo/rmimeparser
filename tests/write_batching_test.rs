@@ -71,7 +71,10 @@ fn text_body_is_written_in_runs() {
     w.content_transfer_encoding(&mut ring, "8bit").unwrap();
     w.end_headers(&mut ring).unwrap();
     let line = "plain text line without anything special\n".repeat(2000);
-    assert_eq!(w.body_content(&mut ring, line.as_bytes()).unwrap(), line.len());
+    assert_eq!(
+        w.body_content(&mut ring, line.as_bytes()).unwrap(),
+        line.len()
+    );
     w.end_entity(&mut ring, None).unwrap();
     w.close().unwrap();
     let text = String::from_utf8(ring.spans().to_vec()).unwrap();
@@ -93,7 +96,11 @@ fn text_body_validation_still_applies_inside_runs() {
         w.start_entity(&mut ring, None).unwrap();
         w.content_transfer_encoding(&mut ring, cte).unwrap();
         w.end_headers(&mut ring).unwrap();
-        assert_eq!(w.body_content(&mut ring, body).is_ok(), expect_ok, "{cte} {body:?}");
+        assert_eq!(
+            w.body_content(&mut ring, body).is_ok(),
+            expect_ok,
+            "{cte} {body:?}"
+        );
     }
 }
 
@@ -102,18 +109,24 @@ fn boundary_in_body_is_still_rejected_across_chunks() {
     let mut ring = LoopBuf::with_capacity(4096);
     let mut w = MimeWriter::new();
     w.start_entity(&mut ring, None).unwrap();
-    w.content_type(&mut ring, &ContentType::new(
-        "multipart",
-        "mixed",
-        Some(vec![Parameter::new("boundary", "BND")]),
-    ))
+    w.content_type(
+        &mut ring,
+        &ContentType::new(
+            "multipart",
+            "mixed",
+            Some(vec![Parameter::new("boundary", "BND")]),
+        ),
+    )
     .unwrap();
     w.end_headers(&mut ring).unwrap();
     w.start_entity(&mut ring, Some("BND")).unwrap();
     w.end_headers(&mut ring).unwrap();
     w.body_content(&mut ring, b"some text\r").unwrap();
     assert!(w.body_content(&mut ring, b"\n--BN").is_ok());
-    assert!(w.body_content(&mut ring, b"D tail").is_err(), "split delimiter must still be found");
+    assert!(
+        w.body_content(&mut ring, b"D tail").is_err(),
+        "split delimiter must still be found"
+    );
 }
 
 #[test]
@@ -121,11 +134,14 @@ fn boundary_lookalikes_are_not_rejected() {
     let mut ring = LoopBuf::with_capacity(4096);
     let mut w = MimeWriter::new();
     w.start_entity(&mut ring, None).unwrap();
-    w.content_type(&mut ring, &ContentType::new(
-        "multipart",
-        "mixed",
-        Some(vec![Parameter::new("boundary", "BND")]),
-    ))
+    w.content_type(
+        &mut ring,
+        &ContentType::new(
+            "multipart",
+            "mixed",
+            Some(vec![Parameter::new("boundary", "BND")]),
+        ),
+    )
     .unwrap();
     w.end_headers(&mut ring).unwrap();
     w.start_entity(&mut ring, Some("BND")).unwrap();

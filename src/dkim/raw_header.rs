@@ -39,13 +39,12 @@ impl RawHeader {
                         continue;
                     }
                 }
-            } else if bytes[i] == b'\n'
-                && i + 1 < bytes.len() {
-                    let next = bytes[i + 1];
-                    if next == b' ' || next == b'\t' {
-                        fold_bytes += 1;
-                    }
+            } else if bytes[i] == b'\n' && i + 1 < bytes.len() {
+                let next = bytes[i + 1];
+                if next == b' ' || next == b'\t' {
+                    fold_bytes += 1;
                 }
+            }
             i += 1;
         }
 

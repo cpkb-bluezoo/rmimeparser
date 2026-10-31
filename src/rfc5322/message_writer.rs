@@ -83,7 +83,11 @@ impl MessageWriter {
         self.inner.content_disposition(buf, disposition)
     }
 
-    pub fn content_transfer_encoding(&mut self, buf: &mut LoopBuf, encoding: &str) -> WriteResult<()> {
+    pub fn content_transfer_encoding(
+        &mut self,
+        buf: &mut LoopBuf,
+        encoding: &str,
+    ) -> WriteResult<()> {
         self.inner.content_transfer_encoding(buf, encoding)
     }
 
@@ -95,11 +99,20 @@ impl MessageWriter {
         self.inner.content_description(buf, description)
     }
 
-    pub fn mime_version(&mut self, buf: &mut LoopBuf, version: crate::mime::MimeVersion) -> WriteResult<()> {
+    pub fn mime_version(
+        &mut self,
+        buf: &mut LoopBuf,
+        version: crate::mime::MimeVersion,
+    ) -> WriteResult<()> {
         self.inner.mime_version(buf, version)
     }
 
-    pub fn raw_header(&mut self, buf: &mut LoopBuf, name: &str, raw_bytes: &[u8]) -> WriteResult<()> {
+    pub fn raw_header(
+        &mut self,
+        buf: &mut LoopBuf,
+        name: &str,
+        raw_bytes: &[u8],
+    ) -> WriteResult<()> {
         self.inner.raw_header(buf, name, raw_bytes)
     }
 
@@ -108,7 +121,12 @@ impl MessageWriter {
         self.inner.header(buf, name, value)
     }
 
-    pub fn date_header(&mut self, buf: &mut LoopBuf, name: &str, date: OffsetDateTime) -> WriteResult<()> {
+    pub fn date_header(
+        &mut self,
+        buf: &mut LoopBuf,
+        name: &str,
+        date: OffsetDateTime,
+    ) -> WriteResult<()> {
         let value = MessageDateTimeFormatter::format(&date);
         self.inner.header_raw_value(buf, name, &value)
     }
@@ -159,9 +177,11 @@ fn format_address(addr: &EmailAddress) -> String {
             return angle;
         }
         let encoded = if Rfc2047Encoder::contains_non_ascii(name.as_bytes())
-            || name.as_bytes().iter().any(|&b| {
-                b < 0x20 || b == b'"' || b == b'\\' || b == b'\r' || b == b'\n'
-            }) {
+            || name
+                .as_bytes()
+                .iter()
+                .any(|&b| b < 0x20 || b == b'"' || b == b'\\' || b == b'\r' || b == b'\n')
+        {
             Rfc2047Encoder::encode_header_value(name.as_bytes(), "UTF-8")
         } else if needs_quoting(name) {
             format!("\"{}\"", escape_quoted(name))

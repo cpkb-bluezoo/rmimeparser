@@ -16,7 +16,12 @@ fn encode(data: &[u8]) -> Vec<u8> {
 fn decode_all(encoded: &[u8]) -> Vec<u8> {
     let mut src = encoded;
     let mut dst = Vec::new();
-    decode_uuencode(&mut src, &mut dst, estimate_uuencode_decoded_size(encoded.len()), true);
+    decode_uuencode(
+        &mut src,
+        &mut dst,
+        estimate_uuencode_decoded_size(encoded.len()),
+        true,
+    );
     assert!(src.is_empty(), "everything consumed at end of stream");
     dst
 }
@@ -36,8 +41,14 @@ fn round_trips_every_length_around_the_line_size() {
         let encoded = encode(&data);
         assert_eq!(decode_all(&encoded), data, "len {len}");
         let text = String::from_utf8(encoded.clone()).unwrap();
-        for line in text.lines().filter(|l| !l.starts_with("begin") && *l != "end" && *l != "`") {
-            assert!(line.len() <= 1 + (UUENCODE_LINE_BYTES + 2) / 3 * 4, "{line}");
+        for line in text
+            .lines()
+            .filter(|l| !l.starts_with("begin") && *l != "end" && *l != "`")
+        {
+            assert!(
+                line.len() <= 1 + (UUENCODE_LINE_BYTES + 2) / 3 * 4,
+                "{line}"
+            );
             assert!(!line.ends_with(' '), "no trailing whitespace: {line:?}");
         }
     }
@@ -137,7 +148,9 @@ impl MimeHandler for BodyCollector {
 #[test]
 fn parser_decodes_an_x_uuencode_body() {
     let data = sample(200);
-    let mut message = b"Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: x-uuencode\r\n\r\n".to_vec();
+    let mut message =
+        b"Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: x-uuencode\r\n\r\n"
+            .to_vec();
     message.extend_from_slice(&encode(&data));
     for step in [1usize, 5, 64, message.len()] {
         let mut handler = BodyCollector::default();

@@ -119,12 +119,7 @@ impl EmailAddressParser {
                 break;
             }
             value.advance(1);
-            addresses.push(EmailAddress::new(
-                display_name,
-                local_part,
-                domain,
-                false,
-            ));
+            addresses.push(EmailAddress::new(display_name, local_part, domain, false));
         }
         Some(addresses)
     }
@@ -141,10 +136,7 @@ impl EmailAddressParser {
         Self::parse_envelope_address_smtp_utf8(value, false)
     }
 
-    pub fn parse_envelope_address_smtp_utf8(
-        value: &str,
-        smtp_utf8: bool,
-    ) -> Option<EmailAddress> {
+    pub fn parse_envelope_address_smtp_utf8(value: &str, smtp_utf8: bool) -> Option<EmailAddress> {
         let value = value.trim();
         if value.is_empty() {
             return None;
@@ -546,8 +538,12 @@ fn is_atom(c: char, smtp_utf8: bool) -> bool {
     if smtp_utf8 && c > '\u{007F}' {
         return true;
     }
-    c > ' ' && c < '\u{007F}'
-        && !matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | ':' | ';' | '@' | '\\' | ',' | '.' | '"')
+    c > ' '
+        && c < '\u{007F}'
+        && !matches!(
+            c,
+            '(' | ')' | '<' | '>' | '[' | ']' | ':' | ';' | '@' | '\\' | ',' | '.' | '"'
+        )
 }
 
 fn is_dtext(c: char) -> bool {
@@ -610,9 +606,9 @@ fn is_valid_domain(domain: &str, smtp_utf8: bool) -> bool {
         if !domain.ends_with(']') {
             return false;
         }
-        return domain[1..domain.len() - 1].chars().all(|c| {
-            ('!'..='~').contains(&c) && !matches!(c, '[' | ']' | '\\')
-        });
+        return domain[1..domain.len() - 1]
+            .chars()
+            .all(|c| ('!'..='~').contains(&c) && !matches!(c, '[' | ']' | '\\'));
     }
     if domain.starts_with('.') || domain.ends_with('.') {
         return false;
@@ -716,8 +712,12 @@ fn skip_group(value: &mut ByteCursor<'_>) {
 }
 
 fn is_atext(b: u8) -> bool {
-    b > 32 && b < 127
-        && !matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b':' | b';' | b'@' | b'\\' | b',' | b'"')
+    b > 32
+        && b < 127
+        && !matches!(
+            b,
+            b'(' | b')' | b'<' | b'>' | b'[' | b']' | b':' | b';' | b'@' | b'\\' | b',' | b'"'
+        )
 }
 
 fn parse_local_part_range(value: &ByteCursor<'_>) -> Option<(usize, usize)> {
@@ -781,7 +781,6 @@ fn parse_domain_range(value: &ByteCursor<'_>) -> Option<(usize, usize)> {
     Some((start, pos))
 }
 
-
 /// Buffers the element parsers reuse from one element to the next.
 #[derive(Default)]
 pub(crate) struct MailboxScratch {
@@ -809,8 +808,7 @@ pub(crate) fn parse_mailbox_element(
     scratch: &mut MailboxScratch,
 ) -> Option<Mailbox> {
     let text = text.trim();
-    parse_mailbox_fast(text, smtp_utf8)
-        .or_else(|| parse_mailbox_general(text, smtp_utf8, scratch))
+    parse_mailbox_fast(text, smtp_utf8).or_else(|| parse_mailbox_general(text, smtp_utf8, scratch))
 }
 
 /// The two shapes nearly every address has, read directly: `local@domain` and
@@ -820,7 +818,30 @@ pub(crate) fn parse_mailbox_element(
 /// then decides.
 fn parse_mailbox_fast(text: &str, smtp_utf8: bool) -> Option<Mailbox> {
     let bytes = text.as_bytes();
-    let plain = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'/' | b'=' | b'?' | b'^' | b'_' | b'`' | b'{' | b'|' | b'}' | b'~');
+    let plain = |b: u8| {
+        b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'!' | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'\''
+                    | b'*'
+                    | b'+'
+                    | b'-'
+                    | b'/'
+                    | b'='
+                    | b'?'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'{'
+                    | b'|'
+                    | b'}'
+                    | b'~'
+            )
+    };
     // The address itself: plain characters and dots, one at sign
     let address = |s: &str| -> Option<(String, String)> {
         let (local, domain) = s.split_once('@')?;
@@ -972,7 +993,10 @@ fn clean_name(name: &str) -> String {
     } else {
         name
     };
-    name.replace("\\\"", "\"").replace("\\\\", "\\").trim().to_string()
+    name.replace("\\\"", "\"")
+        .replace("\\\\", "\\")
+        .trim()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -995,9 +1019,37 @@ mod fast_path_tests {
     #[test]
     fn the_fast_path_never_disagrees_with_the_general_parser() {
         let alphabet: Vec<&str> = vec![
-            "a", "B", "7", "x", " ", " ", ".", "@", "@", "<", ">", "-", "_", "+", "\"", "(", ")",
-            ",", ":", ";", "\\", "[", "]", "=?utf-8?q?a?=", "\t", "\u{e9}", "john", "example",
-            ".org", "<a@b.org>", "'",
+            "a",
+            "B",
+            "7",
+            "x",
+            " ",
+            " ",
+            ".",
+            "@",
+            "@",
+            "<",
+            ">",
+            "-",
+            "_",
+            "+",
+            "\"",
+            "(",
+            ")",
+            ",",
+            ":",
+            ";",
+            "\\",
+            "[",
+            "]",
+            "=?utf-8?q?a?=",
+            "\t",
+            "\u{e9}",
+            "john",
+            "example",
+            ".org",
+            "<a@b.org>",
+            "'",
         ];
         let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
         let mut scratch = MailboxScratch::default();

@@ -21,7 +21,11 @@ fn test_contains_non_ascii_empty() {
 fn test_contains_non_ascii_range() {
     let data = "Hello Café World".as_bytes();
     assert!(!Rfc2047Encoder::contains_non_ascii_range(data, 0, 6));
-    assert!(Rfc2047Encoder::contains_non_ascii_range(data, 6, data.len()));
+    assert!(Rfc2047Encoder::contains_non_ascii_range(
+        data,
+        6,
+        data.len()
+    ));
 }
 
 #[test]
@@ -107,7 +111,8 @@ fn test_exact_output_is_stable() {
     );
 
     // Long text splits into words of at most 75 characters.
-    let long = "日本語のテキストです。これは長い件名で、複数の符号化語に分割されるはずです。".as_bytes();
+    let long =
+        "日本語のテキストです。これは長い件名で、複数の符号化語に分割されるはずです。".as_bytes();
     let q = Rfc2047Encoder::encode_q(long, "UTF-8");
     assert_eq!(
         q,

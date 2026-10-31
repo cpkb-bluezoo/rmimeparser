@@ -1,6 +1,4 @@
-use rmimeparser::{
-    decode_quoted_printable, estimate_qp_decoded_size, QuotedPrintableDecoder,
-};
+use rmimeparser::{decode_quoted_printable, estimate_qp_decoded_size, QuotedPrintableDecoder};
 
 fn decode(encoded: &str) -> String {
     let mut src = encoded.as_bytes();
@@ -311,9 +309,7 @@ fn test_decode_invalid_hex_second_char() {
 
 #[test]
 fn test_decode_all_bytes() {
-    let encoded: String = (0..256)
-        .map(|i| format!("={i:02X}"))
-        .collect();
+    let encoded: String = (0..256).map(|i| format!("={i:02X}")).collect();
     let mut src = encoded.as_bytes();
     let mut dst = Vec::with_capacity(256);
     decode_quoted_printable(&mut src, &mut dst, 256, true);

@@ -250,13 +250,17 @@ impl MimeWriter {
                 .last_mut()
                 .ok_or_else(|| invalid("no parent entity"))?;
             if parent.phase != Phase::Body {
-                return Err(invalid("cannot start child entity before parent end_headers"));
+                return Err(invalid(
+                    "cannot start child entity before parent end_headers",
+                ));
             }
             let Some(ref mb) = parent.multipart_boundary else {
                 return Err(invalid("parent entity is not multipart"));
             };
             let Some(b) = boundary else {
-                return Err(invalid("child entity requires start_entity(Some(boundary))"));
+                return Err(invalid(
+                    "child entity requires start_entity(Some(boundary))",
+                ));
             };
             if **mb != *b {
                 return Err(invalid(format!(
@@ -277,7 +281,11 @@ impl MimeWriter {
         Ok(())
     }
 
-    pub fn content_type(&mut self, buf: &mut LoopBuf, content_type: &ContentType) -> WriteResult<()> {
+    pub fn content_type(
+        &mut self,
+        buf: &mut LoopBuf,
+        content_type: &ContentType,
+    ) -> WriteResult<()> {
         self.run(buf, |w, _, _| w.content_type_op(content_type))
     }
 
@@ -304,7 +312,11 @@ impl MimeWriter {
         })
     }
 
-    pub fn content_transfer_encoding(&mut self, buf: &mut LoopBuf, encoding: &str) -> WriteResult<()> {
+    pub fn content_transfer_encoding(
+        &mut self,
+        buf: &mut LoopBuf,
+        encoding: &str,
+    ) -> WriteResult<()> {
         self.run(buf, |w, _, _| w.content_transfer_encoding_op(encoding))
     }
 
@@ -312,14 +324,18 @@ impl MimeWriter {
         let cte = parse_cte(encoding)?;
         let frame = self.current_mut()?;
         if frame.phase != Phase::Headers {
-            return Err(invalid("Content-Transfer-Encoding must be set before end_headers"));
+            return Err(invalid(
+                "Content-Transfer-Encoding must be set before end_headers",
+            ));
         }
         frame.cte = cte;
         self.write_header("Content-Transfer-Encoding", encoding)
     }
 
     pub fn content_id(&mut self, buf: &mut LoopBuf, content_id: &ContentId) -> WriteResult<()> {
-        self.run(buf, |w, _, _| w.write_header("Content-ID", &content_id.to_string()))
+        self.run(buf, |w, _, _| {
+            w.write_header("Content-ID", &content_id.to_string())
+        })
     }
 
     pub fn content_description(&mut self, buf: &mut LoopBuf, description: &str) -> WriteResult<()> {
@@ -329,21 +345,35 @@ impl MimeWriter {
     }
 
     pub fn mime_version(&mut self, buf: &mut LoopBuf, version: MimeVersion) -> WriteResult<()> {
-        self.run(buf, |w, _, _| w.write_header("MIME-Version", &version.to_string()))
+        self.run(buf, |w, _, _| {
+            w.write_header("MIME-Version", &version.to_string())
+        })
     }
 
     /// Write an arbitrary header. Non-ASCII / unsafe values are RFC 2047-encoded.
     pub fn header(&mut self, buf: &mut LoopBuf, name: &str, value: &str) -> WriteResult<()> {
-        self.run(buf, |w, _, _| w.write_header(name, &encode_unstructured(value)))
+        self.run(buf, |w, _, _| {
+            w.write_header(name, &encode_unstructured(value))
+        })
     }
 
     /// Write a header whose value is already encoded (still folded).
-    pub fn header_raw_value(&mut self, buf: &mut LoopBuf, name: &str, value: &str) -> WriteResult<()> {
+    pub fn header_raw_value(
+        &mut self,
+        buf: &mut LoopBuf,
+        name: &str,
+        value: &str,
+    ) -> WriteResult<()> {
         self.run(buf, |w, _, _| w.write_header(name, value))
     }
 
     /// Emit already-folded header wire bytes (including terminating CRLF).
-    pub fn raw_header(&mut self, buf: &mut LoopBuf, _name: &str, raw_bytes: &[u8]) -> WriteResult<()> {
+    pub fn raw_header(
+        &mut self,
+        buf: &mut LoopBuf,
+        _name: &str,
+        raw_bytes: &[u8],
+    ) -> WriteResult<()> {
         self.run(buf, |w, _, _| {
             w.require_headers()?;
             validate_raw_header_bytes(raw_bytes)?;
@@ -392,7 +422,10 @@ impl MimeWriter {
         }
         self.run(buf, |w, room, capacity| {
             w.require_body()?;
-            if matches!(w.current_mut()?.cte, CteKind::Base64 | CteKind::QuotedPrintable) {
+            if matches!(
+                w.current_mut()?.cte,
+                CteKind::Base64 | CteKind::QuotedPrintable
+            ) {
                 return Err(invalid(
                     "raw_body_content cannot mix with base64/quoted-printable CTE encoders",
                 ));
@@ -690,9 +723,7 @@ impl MimeWriter {
 
 fn encode_unstructured(value: &str) -> String {
     let bytes = value.as_bytes();
-    if Rfc2047Encoder::contains_non_ascii(bytes)
-        || bytes.iter().any(|&b| b < 0x20 && b != b'\t')
-    {
+    if Rfc2047Encoder::contains_non_ascii(bytes) || bytes.iter().any(|&b| b < 0x20 && b != b'\t') {
         Rfc2047Encoder::encode_header_value(bytes, "UTF-8")
     } else {
         value.to_string()
@@ -728,9 +759,7 @@ fn validate_raw_header_bytes(raw: &[u8]) -> io::Result<()> {
         if raw[i] == b'\r' {
             if i + 1 < raw.len() && raw[i + 1] == b'\n' {
                 if line_len > super::folding::HARD_LINE_LIMIT {
-                    return Err(invalid(
-                        "raw_header line exceeds 998 octets",
-                    ));
+                    return Err(invalid("raw_header line exceeds 998 octets"));
                 }
                 line_len = 0;
                 i += 2;
@@ -743,9 +772,7 @@ fn validate_raw_header_bytes(raw: &[u8]) -> io::Result<()> {
         }
         line_len += 1;
         if line_len > super::folding::HARD_LINE_LIMIT {
-            return Err(invalid(
-                "raw_header line exceeds 998 octets",
-            ));
+            return Err(invalid("raw_header line exceeds 998 octets"));
         }
         i += 1;
     }

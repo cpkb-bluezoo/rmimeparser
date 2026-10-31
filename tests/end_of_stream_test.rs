@@ -1,7 +1,5 @@
 use loopbuf::LoopBuf;
-use rmimeparser::{
-    Address, EmailAddressParser, MimeHandler, MimeParser, ParseResult,
-};
+use rmimeparser::{Address, EmailAddressParser, MimeHandler, MimeParser, ParseResult};
 
 #[derive(Default)]
 struct Collect {
@@ -58,7 +56,11 @@ fn closing_boundary_without_crlf_is_accepted() {
     let raw = b"Content-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nPlain.\r\n--x\r\nContent-Type: text/html\r\n\r\n<b>HTML</b>\r\n--x--";
     for step in [1usize, 13, raw.len()] {
         let h = finish_in_chunks(raw, step);
-        assert_eq!(h.bodies, vec![b"Plain.".to_vec(), b"<b>HTML</b>".to_vec()], "step {step}");
+        assert_eq!(
+            h.bodies,
+            vec![b"Plain.".to_vec(), b"<b>HTML</b>".to_vec()],
+            "step {step}"
+        );
         assert_eq!(h.entities, 3);
     }
 }
@@ -75,10 +77,17 @@ fn final_base64_quantum_without_terminator_is_decoded() {
 /// addresses; a `<` later in the list must not be read as this address's.
 #[test]
 fn address_list_with_display_name_after_bare_address() {
-    let list = EmailAddressParser::parse_email_address_list("a@x.org, Bob <b@x.org>").expect("two addresses");
-    let addrs: Vec<String> = list.iter().filter_map(Address::as_mailbox).map(|m| m.address()).collect();
+    let list = EmailAddressParser::parse_email_address_list("a@x.org, Bob <b@x.org>")
+        .expect("two addresses");
+    let addrs: Vec<String> = list
+        .iter()
+        .filter_map(Address::as_mailbox)
+        .map(|m| m.address())
+        .collect();
     assert_eq!(addrs, vec!["a@x.org", "b@x.org"]);
-    let list = EmailAddressParser::parse_email_address_list("Team: a@x.org, Bob <b@x.org>;, c@y.org").expect("group then address");
+    let list =
+        EmailAddressParser::parse_email_address_list("Team: a@x.org, Bob <b@x.org>;, c@y.org")
+            .expect("group then address");
     assert_eq!(list.len(), 2);
     assert!(matches!(list[0], Address::Group(ref g) if g.members().len() == 2));
     assert_eq!(list[1].as_mailbox().unwrap().address(), "c@y.org");

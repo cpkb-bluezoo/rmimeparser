@@ -39,16 +39,14 @@ pub fn is_token_char(c: char) -> bool {
 
 /// RFC 2045 tspecial — must be quoted in parameter values.
 pub fn is_special(c: char) -> bool {
-    matches!(c,
-        '(' | ')' | '<' | '>' | '@' | ',' | ';' | ':' | '\\' | '"' |
-        '/' | '[' | ']' | '?' | '='
+    matches!(
+        c,
+        '(' | ')' | '<' | '>' | '@' | ',' | ';' | ':' | '\\' | '"' | '/' | '[' | ']' | '?' | '='
     )
 }
 
 pub fn is_valid_boundary(boundary: &str) -> bool {
-    !boundary.is_empty()
-        && boundary.len() <= 70
-        && boundary.chars().all(is_boundary_char)
+    !boundary.is_empty() && boundary.len() <= 70 && boundary.chars().all(is_boundary_char)
 }
 
 pub fn is_boundary_char(c: char) -> bool {

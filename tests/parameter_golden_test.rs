@@ -7,38 +7,107 @@ use rmimeparser::{ContentDispositionParser, ContentTypeParser};
 /// `(input bytes, expected rendering)`; `None` is a header that does not parse.
 const CONTENT_TYPES: &[(&[u8], &str)] = &[
     (b"text/plain", r##"text/plain"##),
-    (b"text/plain; charset=utf-8", r##"text/plain | charset="utf-8""##),
-    (b"text/plain;charset=utf-8;format=flowed", r##"text/plain | charset="utf-8" | format="flowed""##),
-    (b"  text/plain  ;  charset = utf-8  ", r##"text/plain | charset="utf-8""##),
-    (b"TEXT/Plain; CHARSET=UTF-8", r##"TEXT/Plain | CHARSET="UTF-8""##),
-    (b"text/plain; name=\"a b.txt\"", r##"text/plain | name="a b.txt""##),
-    (b"text/plain; name=\"a\\\"b\\\\c\"", r##"text/plain | name="a\"b\\c""##),
-    (b"text/plain; name= \"spaced quote\"", r##"text/plain | name="spaced quote""##),
+    (
+        b"text/plain; charset=utf-8",
+        r##"text/plain | charset="utf-8""##,
+    ),
+    (
+        b"text/plain;charset=utf-8;format=flowed",
+        r##"text/plain | charset="utf-8" | format="flowed""##,
+    ),
+    (
+        b"  text/plain  ;  charset = utf-8  ",
+        r##"text/plain | charset="utf-8""##,
+    ),
+    (
+        b"TEXT/Plain; CHARSET=UTF-8",
+        r##"TEXT/Plain | CHARSET="UTF-8""##,
+    ),
+    (
+        b"text/plain; name=\"a b.txt\"",
+        r##"text/plain | name="a b.txt""##,
+    ),
+    (
+        b"text/plain; name=\"a\\\"b\\\\c\"",
+        r##"text/plain | name="a\"b\\c""##,
+    ),
+    (
+        b"text/plain; name= \"spaced quote\"",
+        r##"text/plain | name="spaced quote""##,
+    ),
     // differs from the buffered parser: an unterminated quoted value is kept, as far as it goes
-    (b"text/plain; name=\"unterminated", r##"text/plain | name="unterminated""##),
-    (b"text/plain; =noname; charset=x", r##"text/plain | charset="x""##),
+    (
+        b"text/plain; name=\"unterminated",
+        r##"text/plain | name="unterminated""##,
+    ),
+    (
+        b"text/plain; =noname; charset=x",
+        r##"text/plain | charset="x""##,
+    ),
     // differs from the buffered parser: a parameter with no value is skipped, not the rest of the list
-    (b"text/plain; novalue; charset=x", r##"text/plain | charset="x""##),
-    (b"text/plain; bad name=1; charset=x", r##"text/plain | charset="x""##),
-    (b"text/plain; charset=x; charset=y", r##"text/plain | charset="x""##),
+    (
+        b"text/plain; novalue; charset=x",
+        r##"text/plain | charset="x""##,
+    ),
+    (
+        b"text/plain; bad name=1; charset=x",
+        r##"text/plain | charset="x""##,
+    ),
+    (
+        b"text/plain; charset=x; charset=y",
+        r##"text/plain | charset="x""##,
+    ),
     (b"text/plain;;charset=x;", r##"text/plain | charset="x""##),
-    (b"text/plain; name=\"=?UTF-8?B?dGVzdC50eHQ=?=\"", r##"text/plain | name="test.txt""##),
-    (b"text/plain; name==?UTF-8?Q?a_b?=", r##"text/plain | name="a b""##),
-    (b"text/plain; filename*=UTF-8''na%C3%AFve%20file.txt", r##"text/plain | filename="naïve file.txt""##),
-    (b"text/plain; filename*=iso-8859-1'en'caf%E9", r##"text/plain | filename="café""##),
+    (
+        b"text/plain; name=\"=?UTF-8?B?dGVzdC50eHQ=?=\"",
+        r##"text/plain | name="test.txt""##,
+    ),
+    (
+        b"text/plain; name==?UTF-8?Q?a_b?=",
+        r##"text/plain | name="a b""##,
+    ),
+    (
+        b"text/plain; filename*=UTF-8''na%C3%AFve%20file.txt",
+        r##"text/plain | filename="naïve file.txt""##,
+    ),
+    (
+        b"text/plain; filename*=iso-8859-1'en'caf%E9",
+        r##"text/plain | filename="café""##,
+    ),
     // differs from the buffered parser: plain continuations are joined
-    (b"text/plain; filename*0=\"abc\"; filename*1=\"def\"", r##"text/plain | filename="abcdef""##),
+    (
+        b"text/plain; filename*0=\"abc\"; filename*1=\"def\"",
+        r##"text/plain | filename="abcdef""##,
+    ),
     // differs from the buffered parser: extended continuations are decoded and joined
-    (b"text/plain; filename*0*=UTF-8''a%20b; filename*1*=%20c; filename*2=d", r##"text/plain | filename="a b cd""##),
+    (
+        b"text/plain; filename*0*=UTF-8''a%20b; filename*1*=%20c; filename*2=d",
+        r##"text/plain | filename="a b cd""##,
+    ),
     // differs from the buffered parser: a segment out of order is dropped
-    (b"text/plain; filename*1=\"def\"; filename*0=\"abc\"", r##"text/plain | filename="abc""##),
+    (
+        b"text/plain; filename*1=\"def\"; filename*0=\"abc\"",
+        r##"text/plain | filename="abc""##,
+    ),
     // differs from the buffered parser: an extended continuation is decoded, and replaces the plain parameter
-    (b"text/plain; filename*0*=UTF-8''ab; filename=\"plain.txt\"", r##"text/plain | filename="ab""##),
-    (b"text/plain; filename=\"plain.txt\"; filename*=UTF-8''ext.txt", r##"text/plain | filename="ext.txt""##),
+    (
+        b"text/plain; filename*0*=UTF-8''ab; filename=\"plain.txt\"",
+        r##"text/plain | filename="ab""##,
+    ),
+    (
+        b"text/plain; filename=\"plain.txt\"; filename*=UTF-8''ext.txt",
+        r##"text/plain | filename="ext.txt""##,
+    ),
     (b"text/plain; title*=bad", r##"text/plain | title="bad""##),
     (b"text/plain; title*=UTF-8''", r##"text/plain | title="""##),
-    (b"multipart/mixed; boundary=\"b\"", r##"multipart/mixed | boundary="b""##),
-    (b"multipart/mixed; boundary=b; charset=x", r##"multipart/mixed | boundary="b" | charset="x""##),
+    (
+        b"multipart/mixed; boundary=\"b\"",
+        r##"multipart/mixed | boundary="b""##,
+    ),
+    (
+        b"multipart/mixed; boundary=b; charset=x",
+        r##"multipart/mixed | boundary="b" | charset="x""##,
+    ),
     (b"text", r##"None"##),
     (b"text/", r##"None"##),
     (b"/plain", r##"None"##),
@@ -47,41 +116,89 @@ const CONTENT_TYPES: &[(&[u8], &str)] = &[
     (b"text/plain junk", r##"None"##),
     (b"text/plain (comment)", r##"None"##),
     // differs from the buffered parser: raw UTF-8 in a value is read as UTF-8
-    (b"text/plain; name=\"caf\xc3\xa9\"", r##"text/plain | name="café""##),
-    (b"text/plain; name=\"caf\xe9\"", r##"text/plain | name="café""##),
+    (
+        b"text/plain; name=\"caf\xc3\xa9\"",
+        r##"text/plain | name="café""##,
+    ),
+    (
+        b"text/plain; name=\"caf\xe9\"",
+        r##"text/plain | name="café""##,
+    ),
     // differs from the buffered parser: an unquoted value is kept whole, spaces and all
     (b"text/plain; name=a b c", r##"text/plain | name="a b c""##),
     // differs from the buffered parser: text after the closing quote is ignored, and the list goes on
-    (b"text/plain; name=\"x\"junk; k=v", r##"text/plain | name="x" | k="v""##),
-    (b"text/plain; a=1;b=2;c=3;d=4", r##"text/plain | a="1" | b="2" | c="3" | d="4""##),
+    (
+        b"text/plain; name=\"x\"junk; k=v",
+        r##"text/plain | name="x" | k="v""##,
+    ),
+    (
+        b"text/plain; a=1;b=2;c=3;d=4",
+        r##"text/plain | a="1" | b="2" | c="3" | d="4""##,
+    ),
     (b"text/plain; name=\"\"", r##"text/plain | name="""##),
     (b"text/plain; name=", r##"text/plain | name="""##),
-    (b"text/plain\t;\tcharset=utf-8", r##"text/plain | charset="utf-8""##),
+    (
+        b"text/plain\t;\tcharset=utf-8",
+        r##"text/plain | charset="utf-8""##,
+    ),
     (b"a/b;c=d", r##"a/b | c="d""##),
     (b"a/", r##"None"##),
     (b"", r##"None"##),
-    (b"text/plain; name=\"  padded  \"", r##"text/plain | name="padded""##),
-    (b"text/plain; name=  padded  ", r##"text/plain | name="padded""##),
+    (
+        b"text/plain; name=\"  padded  \"",
+        r##"text/plain | name="padded""##,
+    ),
+    (
+        b"text/plain; name=  padded  ",
+        r##"text/plain | name="padded""##,
+    ),
     // differs from the buffered parser: a character split across two segments is decoded whole
-    (b"text/plain; n*0*=utf-8''%C3; n*1*=%A9", r##"text/plain | n="é""##),
-    (b"text/plain; n*0=\"a\"; n*2=\"c\"", r##"text/plain | n="a""##),
+    (
+        b"text/plain; n*0*=utf-8''%C3; n*1*=%A9",
+        r##"text/plain | n="é""##,
+    ),
+    (
+        b"text/plain; n*0=\"a\"; n*2=\"c\"",
+        r##"text/plain | n="a""##,
+    ),
 ];
 
 const DISPOSITIONS: &[(&[u8], &str)] = &[
     (b"attachment", r##"attachment"##),
     (b"inline", r##"inline"##),
-    (b"form-data; name=\"f\"; filename=\"x.txt\"", r##"form-data | name="f" | filename="x.txt""##),
-    (b"attachment; filename*=UTF-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.txt", r##"attachment | filename="日本語.txt""##),
+    (
+        b"form-data; name=\"f\"; filename=\"x.txt\"",
+        r##"form-data | name="f" | filename="x.txt""##,
+    ),
+    (
+        b"attachment; filename*=UTF-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.txt",
+        r##"attachment | filename="日本語.txt""##,
+    ),
     (b"attachment;", r##"attachment"##),
-    (b"Attachment ; FileName = \"T.TXT\"", r##"Attachment | FileName="T.TXT""##),
+    (
+        b"Attachment ; FileName = \"T.TXT\"",
+        r##"Attachment | FileName="T.TXT""##,
+    ),
     (b"bad type; x=1", r##"None"##),
-    (b"attachment; size=123; creation-date=\"Tue, 6 Oct 2026 10:00:00 +0000\"", r##"attachment | size="123" | creation-date="Tue, 6 Oct 2026 10:00:00 +0000""##),
-    (b"attachment; filename=\"=?UTF-8?B?dGVzdC50eHQ=?=\"", r##"attachment | filename="test.txt""##),
-    (b"attachment; filename=C:\\dir\\x.pdf", r##"attachment | filename="C:\\dir\\x.pdf""##),
+    (
+        b"attachment; size=123; creation-date=\"Tue, 6 Oct 2026 10:00:00 +0000\"",
+        r##"attachment | size="123" | creation-date="Tue, 6 Oct 2026 10:00:00 +0000""##,
+    ),
+    (
+        b"attachment; filename=\"=?UTF-8?B?dGVzdC50eHQ=?=\"",
+        r##"attachment | filename="test.txt""##,
+    ),
+    (
+        b"attachment; filename=C:\\dir\\x.pdf",
+        r##"attachment | filename="C:\\dir\\x.pdf""##,
+    ),
     (b"", r##"None"##),
     (b"; filename=x", r##"None"##),
     // differs from the buffered parser: plain continuations are joined, white space inside a segment kept
-    (b"attachment; filename*0=\"my \"; filename*1=\"file.txt\"", r##"attachment | filename="my file.txt""##),
+    (
+        b"attachment; filename*0=\"my \"; filename*1=\"file.txt\"",
+        r##"attachment | filename="my file.txt""##,
+    ),
 ];
 
 fn render_ct(input: &[u8]) -> String {
@@ -117,14 +234,24 @@ fn render_cd(input: &[u8]) -> String {
 #[test]
 fn content_types_parse_as_recorded() {
     for (input, expected) in CONTENT_TYPES {
-        assert_eq!(&render_ct(input), expected, "{:?}", String::from_utf8_lossy(input));
+        assert_eq!(
+            &render_ct(input),
+            expected,
+            "{:?}",
+            String::from_utf8_lossy(input)
+        );
     }
 }
 
 #[test]
 fn dispositions_parse_as_recorded() {
     for (input, expected) in DISPOSITIONS {
-        assert_eq!(&render_cd(input), expected, "{:?}", String::from_utf8_lossy(input));
+        assert_eq!(
+            &render_cd(input),
+            expected,
+            "{:?}",
+            String::from_utf8_lossy(input)
+        );
     }
 }
 
@@ -152,9 +279,11 @@ mod chunking {
         }
         fn end_content_type(&mut self) -> ParseResult<()> {
             let ct = self.ct.finish();
-            self.out.push_str(&format!("{}/{}", ct.primary_type(), ct.sub_type()));
+            self.out
+                .push_str(&format!("{}/{}", ct.primary_type(), ct.sub_type()));
             for p in ct.parameters().unwrap_or(&[]) {
-                self.out.push_str(&format!(" | {}={:?}", p.name(), p.value()));
+                self.out
+                    .push_str(&format!(" | {}={:?}", p.name(), p.value()));
             }
             Ok(())
         }
@@ -166,7 +295,8 @@ mod chunking {
             let cd = self.cd.finish();
             self.out.push_str(cd.disposition_type());
             for p in cd.parameters().unwrap_or(&[]) {
-                self.out.push_str(&format!(" | {}={:?}", p.name(), p.value()));
+                self.out
+                    .push_str(&format!(" | {}={:?}", p.name(), p.value()));
             }
             Ok(())
         }

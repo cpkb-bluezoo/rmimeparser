@@ -7,20 +7,17 @@ use loopbuf::LoopBuf;
 
 use crate::buffer::ByteCursor;
 use crate::charset::HeaderCharset;
-use crate::mime::content_types::MimeVersion;
 use crate::mime::content_id_parser::ContentIdParser;
+use crate::mime::content_types::MimeVersion;
 use crate::mime::decoders::{
     decode_base64, decode_quoted_printable, decode_uuencode, is_base64_char,
 };
 use crate::mime::error::{ParseError, ParseResult};
 use crate::mime::handler::{HeaderDelivery, Locator, MimeHandler, SharedLocator};
 use crate::mime::limits::ParserLimits;
+use crate::mime::messages::{format_header_value_too_long, format_unclosed_boundary, MIMEMessages};
 use crate::mime::parameters::{Fed, Kind, ParameterParser, ParameterSink};
-use crate::mime::messages::{
-    format_header_value_too_long, format_unclosed_boundary, MIMEMessages,
-};
-use crate::mime::utils::{decode_token_header_value, index_of, is_token,
-                         is_valid_boundary};
+use crate::mime::utils::{decode_token_header_value, index_of, is_token, is_valid_boundary};
 use crate::mime::wire_sink::{MimeWireSink, NoWire};
 use crate::rfc2047::HeaderTextDecoder;
 
@@ -615,7 +612,11 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         }
 
         let length = end - start;
-        if self.limits.max_header_line_length.is_some_and(|max| length > max) {
+        if self
+            .limits
+            .max_header_line_length
+            .is_some_and(|max| length > max)
+        {
             return Err(ParseError::with_locator(
                 MIMEMessages::HEADER_LINE_TOO_LONG,
                 &*self.locator,
@@ -845,7 +846,8 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             }
             ValueMode::Unstructured => {
                 let handler = &mut self.handler;
-                self.text_decoder.finish(&mut |text| handler.header_content(text))?;
+                self.text_decoder
+                    .finish(&mut |text| handler.header_content(text))?;
                 self.handler.end_header()
             }
             ValueMode::Raw => self.handler.end_header(),
@@ -1467,13 +1469,9 @@ pub fn check_boundary(line: &[u8], boundary: &str) -> Option<BoundaryMatch> {
 /// The headers the parser understands itself; every other header is delivered
 /// to the handler.
 fn is_understood_header(name: &str) -> bool {
-    [
-        "content-transfer-encoding",
-        "content-id",
-        "mime-version",
-    ]
-    .iter()
-    .any(|known| name.eq_ignore_ascii_case(known))
+    ["content-transfer-encoding", "content-id", "mime-version"]
+        .iter()
+        .any(|known| name.eq_ignore_ascii_case(known))
 }
 
 fn is_header_whitespace(b: u8) -> bool {
