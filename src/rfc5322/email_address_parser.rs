@@ -551,7 +551,7 @@ fn is_atom(c: char, smtp_utf8: bool) -> bool {
 }
 
 fn is_dtext(c: char) -> bool {
-    c >= '!' && c <= '~' && !matches!(c, '[' | ']' | '\\')
+    ('!'..='~').contains(&c) && !matches!(c, '[' | ']' | '\\')
 }
 
 fn is_valid_local_part(local_part: &str, smtp_utf8: bool) -> bool {
@@ -611,7 +611,7 @@ fn is_valid_domain(domain: &str, smtp_utf8: bool) -> bool {
             return false;
         }
         return domain[1..domain.len() - 1].chars().all(|c| {
-            (c >= '!' && c <= '~') && !matches!(c, '[' | ']' | '\\')
+            ('!'..='~').contains(&c) && !matches!(c, '[' | ']' | '\\')
         });
     }
     if domain.starts_with('.') || domain.ends_with('.') {

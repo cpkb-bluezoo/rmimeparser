@@ -28,7 +28,7 @@ pub use mime::{
 pub use rfc2047::{Decoder as Rfc2047Decoder, Encoder as Rfc2047Encoder, HeaderTextDecoder};
 pub use rfc2231::Decoder as Rfc2231Decoder;
 pub use rfc5322::{
-    Address, AddressListCollector, MessageIdListCollector, EmailAddress, EmailAddressParser, GroupEmailAddress, MessageDateTimeFormatter,
+    Address, AddressListCollector, DateTimeParseError, MessageIdListCollector, EmailAddress, EmailAddressParser, GroupEmailAddress, MessageDateTimeFormatter,
     MessageHandler, MessageIdParser, MessageParser, MessageWriter, ObsoleteParserUtils, ObsoleteStructureType,
     OffsetDateTime,
 };

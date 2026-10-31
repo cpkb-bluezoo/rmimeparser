@@ -52,6 +52,18 @@ impl fmt::Display for OffsetDateTime {
     }
 }
 
+/// The text is not an RFC 5322 date-time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DateTimeParseError;
+
+impl fmt::Display for DateTimeParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("not an RFC 5322 date-time")
+    }
+}
+
+impl std::error::Error for DateTimeParseError {}
+
 /// RFC 5322 date-time formatter/parser.
 pub struct MessageDateTimeFormatter;
 
@@ -61,8 +73,8 @@ impl MessageDateTimeFormatter {
         let month = MONTHS[(dt.month.saturating_sub(1)) as usize];
         let sign = if dt.offset_seconds >= 0 { '+' } else { '-' };
         let abs = dt.offset_seconds.unsigned_abs();
-        let off_h = (abs / 3600) as u32;
-        let off_m = ((abs % 3600) / 60) as u32;
+        let off_h = abs / 3600;
+        let off_m = (abs % 3600) / 60;
         format!(
             "{}, {} {} {:04} {:02}:{:02}:{:02} {sign}{:02}{:02}",
             WEEKDAYS[dow],
@@ -77,9 +89,10 @@ impl MessageDateTimeFormatter {
         )
     }
 
-    pub fn parse(date_string: &str) -> Result<OffsetDateTime, ()> {
-        let stripped = crate::mime::utils::strip_comments(date_string)?;
-        parse_date_time(stripped.trim(), false)
+    pub fn parse(date_string: &str) -> Result<OffsetDateTime, DateTimeParseError> {
+        let stripped =
+            crate::mime::utils::strip_comments(date_string).map_err(|()| DateTimeParseError)?;
+        parse_date_time(stripped.trim(), false).map_err(|()| DateTimeParseError)
     }
 
     pub fn parse_obsolete(date_string: &str) -> Option<OffsetDateTime> {
@@ -110,8 +123,7 @@ fn parse_date_time(input: &str, obsolete: bool) -> Result<OffsetDateTime, ()> {
     skip_ws(bytes, &mut pos);
     let month = parse_month(bytes, &mut pos)?;
     skip_ws(bytes, &mut pos);
-    let year_len = if obsolete { 4 } else { 4 };
-    let mut year = read_number(bytes, &mut pos, 2, year_len)?;
+    let mut year = read_number(bytes, &mut pos, 2, 4)?;
     if year < 100 {
         year = if year < 50 { 2000 + year } else { 1900 + year };
     }
@@ -220,7 +232,7 @@ fn weekday(year: i32, month: u8, day: u8) -> usize {
     if month < 3 {
         y -= 1;
     }
-    let w = (y + y / 4 - y / 100 + y / 400 + t[(month - 1) as usize] as i32 + day as i32) % 7;
+    let w = (y + y / 4 - y / 100 + y / 400 + t[(month - 1) as usize] + day as i32) % 7;
     // Sakamoto: 0=Sunday..6=Saturday; RFC 5322 uses Mon..Sun.
     ((w + 6).rem_euclid(7)) as usize
 }

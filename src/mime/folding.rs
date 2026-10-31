@@ -125,7 +125,7 @@ fn validate_header_name(name: &str) -> io::Result<()> {
         return Err(invalid("empty header name"));
     }
     for &b in name.as_bytes() {
-        if b == b':' || b == b'\r' || b == b'\n' || b < 0x21 || b > 0x7e {
+        if b == b':' || b == b'\r' || b == b'\n' || !(0x21..=0x7e).contains(&b) {
             return Err(invalid(format!(
                 "invalid header name: {name}"
             )));
@@ -151,11 +151,10 @@ fn next_atom_end(bytes: &[u8]) -> usize {
     while i < bytes.len() && bytes[i] != b' ' && bytes[i] != b'\t' {
         // If we encounter a new encoded-word start mid-run, stop before it so it
         // can be kept intact on the next iteration.
-        if i > 0 && bytes[i..].starts_with(b"=?") {
-            if find_encoded_word_end(&bytes[i..]).is_some() {
+        if i > 0 && bytes[i..].starts_with(b"=?")
+            && find_encoded_word_end(&bytes[i..]).is_some() {
                 break;
             }
-        }
         i += 1;
     }
     i

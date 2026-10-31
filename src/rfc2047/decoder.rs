@@ -323,7 +323,7 @@ pub(crate) fn decode_single_encoded_word(
         if !base64::is_valid(encoded_text) {
             return Err(());
         }
-        base64::decode(encoded_text)?
+        base64::decode(encoded_text).map_err(|_| ())?
     } else if encoding == 'Q' {
         decode_q_encoding(encoded_text)?
     } else {

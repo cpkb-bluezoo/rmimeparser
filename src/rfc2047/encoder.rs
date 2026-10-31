@@ -32,7 +32,7 @@ impl Encoder {
         let mut bytes_needing_encoding = 0usize;
         for &b in &data[start..end] {
             let b = b as u32;
-            if b > 127 || b < 32 || b == b'?' as u32 || b == b'=' as u32 || b == b'_' as u32 {
+            if !(32..=127).contains(&b) || b == b'?' as u32 || b == b'=' as u32 || b == b'_' as u32 {
                 bytes_needing_encoding += 1;
             }
         }
@@ -91,9 +91,7 @@ impl Encoder {
                     segment_end += 1;
                 } else {
                     let ascii = header[segment_end] as char;
-                    if ascii == '<' || ascii == '>' {
-                        break;
-                    } else if ascii == '"' && segment_end == i {
+                    if ascii == '<' || ascii == '>' || (ascii == '"' && segment_end == i) {
                         break;
                     } else {
                         segment_end += 1;

@@ -168,7 +168,7 @@ fn reference_qp(data: &[u8]) -> Vec<u8> {
             if let Some(w) = pending.take() {
                 emit(&mut out, &mut line_len, w, false, hex);
             }
-            let enc = b == b'\r' || b > 126 || b < 32 || b == b'=';
+            let enc = b == b'\r' || !(32..=126).contains(&b) || b == b'=';
             emit(&mut out, &mut line_len, b, enc, hex);
             i += 1;
         }

@@ -29,9 +29,7 @@ impl Decoder {
             return None;
         }
         value.advance(1);
-        if consume_ascii_until(value, b'\'').is_none() {
-            return None;
-        }
+        consume_ascii_until(value, b'\'')?;
         if value.position() >= limit || value.get(value.position()) != b'\'' {
             return None;
         }
@@ -61,7 +59,7 @@ fn consume_ascii_until(value: &mut ByteCursor<'_>, delimiter: u8) -> Option<Stri
         if b == delimiter {
             return Some(sb.trim().to_string());
         }
-        if b < 0x20 || b > 0x7E {
+        if !(0x20..=0x7E).contains(&b) {
             return None;
         }
         sb.push(b as char);

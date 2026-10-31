@@ -260,7 +260,7 @@ fn random_multipart_bodies_are_chunk_invariant() {
         state
     };
     for round in 0..400 {
-        let mut raw = format!("{MP}").into_bytes();
+        let mut raw = MP.to_string().into_bytes();
         // Usually start a part so headers parse; sometimes go straight to the body.
         if next() % 4 != 0 {
             raw.extend_from_slice(b"--XX\r\n");

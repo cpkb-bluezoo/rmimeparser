@@ -191,7 +191,21 @@ pub fn hex_value(b: u8) -> Option<u8> {
 }
 
 pub mod base64 {
-    pub fn decode(input: &str) -> Result<Vec<u8>, ()> {
+    use std::fmt;
+
+    /// The text is not valid base64.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Base64Error;
+
+    impl fmt::Display for Base64Error {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("invalid base64")
+        }
+    }
+
+    impl std::error::Error for Base64Error {}
+
+    pub fn decode(input: &str) -> Result<Vec<u8>, Base64Error> {
         let mut out = Vec::with_capacity(input.len() / 4 * 3 + 3);
         let mut buf = 0u32;
         let mut bits = 0u32;
@@ -199,7 +213,7 @@ pub mod base64 {
             if b == b'=' {
                 break;
             }
-            let val = decode_char(b).ok_or(())?;
+            let val = decode_char(b).ok_or(Base64Error)?;
             buf = (buf << 6) | val as u32;
             bits += 6;
             if bits >= 8 {
@@ -212,7 +226,7 @@ pub mod base64 {
     }
 
     pub fn encode(data: &[u8]) -> String {
-        let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+        let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
         encode_into(data, &mut out);
         out
     }
@@ -268,9 +282,7 @@ pub mod base64 {
                 if i < input.len() - 2 || padding > 2 {
                     return false;
                 }
-            } else if !is_base64_char(c) {
-                return false;
-            } else if padding > 0 {
+            } else if !is_base64_char(c) || padding > 0 {
                 return false;
             }
         }

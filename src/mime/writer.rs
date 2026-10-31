@@ -719,7 +719,7 @@ fn parse_cte(encoding: &str) -> io::Result<CteKind> {
 }
 
 fn validate_raw_header_bytes(raw: &[u8]) -> io::Result<()> {
-    if raw.iter().any(|&b| b == 0) {
+    if raw.contains(&0) {
         return Err(invalid("NUL in raw_header"));
     }
     let mut line_len = 0usize;

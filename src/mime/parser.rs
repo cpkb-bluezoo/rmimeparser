@@ -670,14 +670,14 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             ));
         }
 
-        for i in start..name_end {
-            let c = line[i];
-            if c < 33 || c > 126 {
-                return Err(ParseError::with_locator(
-                    format!("{}: {}", MIMEMessages::ILLEGAL_FIELD_NAME_CHAR, c),
-                    &*self.locator,
-                ));
-            }
+        if let Some(&c) = line[start..name_end]
+            .iter()
+            .find(|c| !(33..=126).contains(*c))
+        {
+            return Err(ParseError::with_locator(
+                format!("{}: {}", MIMEMessages::ILLEGAL_FIELD_NAME_CHAR, c),
+                &*self.locator,
+            ));
         }
 
         if self

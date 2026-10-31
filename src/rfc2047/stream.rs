@@ -115,12 +115,10 @@ impl HeaderTextDecoder {
                 let mut j = i;
                 while j < bytes.len() {
                     let b = bytes[j];
-                    if PLAIN[b as usize] {
-                        j += 1;
-                    } else if b == b' '
+                    let lone_space = b == b' '
                         && (j > i || lone_space_ok)
-                        && bytes.get(j + 1).is_some_and(|&n| PLAIN[n as usize])
-                    {
+                        && bytes.get(j + 1).is_some_and(|&n| PLAIN[n as usize]);
+                    if PLAIN[b as usize] || lone_space {
                         j += 1;
                     } else {
                         break;
