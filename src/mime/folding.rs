@@ -1,12 +1,16 @@
 //! RFC 5322 header line folding.
 
-use std::io::Write;
+use std::io::{self, Write};
 
 use super::encoders::Batch;
-use super::write_error::{MimeWriteError, WriteResult};
 
 /// Header lines are short; a small buffer turns the per-word writes into one.
 type HeaderBatch<'w, W> = Batch<'w, W, 1024>;
+
+/// An error for input a header cannot be written from.
+fn invalid(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message.into())
+}
 
 /// Recommended maximum length of a header line (RFC 5322 §2.1.1).
 pub const SOFT_LINE_LIMIT: usize = 78;
@@ -19,13 +23,13 @@ pub const HARD_LINE_LIMIT: usize = 998;
 /// Soft-wraps near [`SOFT_LINE_LIMIT`], preferring breaks at WSP. Never breaks
 /// inside an RFC 2047 encoded-word. Never emits a physical line longer than
 /// [`HARD_LINE_LIMIT`].
-pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> WriteResult<()> {
+pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> io::Result<()> {
     validate_header_name(name)?;
 
     // "Name: "
     let name_prefix_len = name.len() + 2;
     if name_prefix_len > HARD_LINE_LIMIT {
-        return Err(MimeWriteError::validation(format!(
+        return Err(invalid(format!(
             "header name too long: {name}"
         )));
     }
@@ -54,7 +58,7 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> Wr
                 fold_newline(&mut out, &mut line_len)?;
             }
             if line_len + 1 > HARD_LINE_LIMIT {
-                return Err(MimeWriteError::validation(
+                return Err(invalid(
                     "header line exceeds 998 octets",
                 ));
             }
@@ -80,7 +84,7 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> Wr
             // Atom itself is too long for one line — hard-break (except encoded-words,
             // which must not be broken).
             if is_encoded_word(atom) {
-                return Err(MimeWriteError::validation(
+                return Err(invalid(
                     "encoded-word exceeds maximum header line length",
                 ));
             }
@@ -110,19 +114,19 @@ pub fn write_folded_header<W: Write>(out: &mut W, name: &str, value: &str) -> Wr
     out.flush()
 }
 
-fn fold_newline<W: Write>(out: &mut HeaderBatch<'_, W>, line_len: &mut usize) -> WriteResult<()> {
+fn fold_newline<W: Write>(out: &mut HeaderBatch<'_, W>, line_len: &mut usize) -> io::Result<()> {
     out.put(b"\r\n ")?;
     *line_len = 1; // continuation WSP
     Ok(())
 }
 
-fn validate_header_name(name: &str) -> WriteResult<()> {
+fn validate_header_name(name: &str) -> io::Result<()> {
     if name.is_empty() {
-        return Err(MimeWriteError::validation("empty header name"));
+        return Err(invalid("empty header name"));
     }
     for &b in name.as_bytes() {
         if b == b':' || b == b'\r' || b == b'\n' || b < 0x21 || b > 0x7e {
-            return Err(MimeWriteError::validation(format!(
+            return Err(invalid(format!(
                 "invalid header name: {name}"
             )));
         }

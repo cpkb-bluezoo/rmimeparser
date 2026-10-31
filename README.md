@@ -6,7 +6,7 @@ Push-based MIME and RFC 5322 message parser and writer for Rust.
 
 - Incremental `receive(&mut LoopBuf)` parsing over a caller-owned ring — the parser holds none of the body, streaming over a fixed read buffer
 - Handler callbacks instead of materialised message domain objects
-- Push `MimeWriter` / `MessageWriter` — constant memory, chunked `body_content`, no builder/DOM
+- Push `MimeWriter` / `MessageWriter` writing into a caller-owned ring, each call atomic — chunked `body_content`, no builder/DOM
 - MIME core with RFC 5322 as an extension (`MessageParser` / `MessageWriter` compose MIME)
 - Content-Transfer-Encoding codecs for base64, quoted-printable and uuencode (`x-uuencode`): the parser decodes bodies as they stream, and each codec is available on its own as a push decoder and a streaming encoder
 - One dependency, [loopbuf](https://github.com/cpkb-bluezoo/loopbuf), the fixed-capacity ring shared by the other parsers
@@ -46,19 +46,24 @@ The parser owns its handler; `handler()`, `handler_mut()` and `into_handler()` g
 ## MIME writer
 
 ```rust
+use loopbuf::LoopBuf;
 use rmimeparser::{ContentType, MimeWriter};
 
-let mut out = Vec::new();
-let mut w = MimeWriter::new(&mut out);
-w.start_entity(None)?;
-w.content_type(&ContentType::new("text", "plain", None))?;
-w.content_transfer_encoding("base64")?;
-w.end_headers()?;
-w.body_content(b"Hello")?;
-w.body_content(b" world")?; // chunked; constant memory
-w.end_entity(None)?;
+let mut ring = LoopBuf::with_capacity(8192);
+let mut w = MimeWriter::new();
+w.start_entity(&mut ring, None)?;
+w.content_type(&mut ring, &ContentType::new("text", "plain", None))?;
+w.content_transfer_encoding(&mut ring, "base64")?;
+w.end_headers(&mut ring)?;
+let taken = w.body_content(&mut ring, b"Hello world")?; // as many bytes as fit
+assert_eq!(taken, 11);
+w.end_entity(&mut ring, None)?;
 w.close()?;
 ```
+
+The writers put their output in a caller-owned ring and hold none of it. Every call is atomic: it appends everything it was asked to or nothing, and leaves the writer as it was. The error is `loopbuf::WriteError`, shared with the other writers: `is_would_block()` means the ring has no room right now, so drain it and repeat the same call; `ErrorKind::InvalidInput` means the call can never succeed (it needs more room than the whole ring has, it is not valid in the writer's state, or what it was given is not valid MIME).
+
+`body_content` and `raw_body_content` take as much of their input as fits and return how much, so a body of any size passes through a ring of any size; call them again with the rest. Everything else takes its whole input or fails.
 
 ## RFC 5322 message parser
 

@@ -555,26 +555,44 @@ let from = parser.raw_header("from");    // Option&lt;&amp;RawHeader&gt;</code><
         <p>
           <code>MimeWriter</code> and <code>MessageWriter</code> are push APIs—no builder or in-memory
           message tree. You emit events; the writer folds headers, applies RFC&nbsp;2047 where needed,
-          and CTE-encodes body chunks as they arrive. Working memory stays small (encoder scratch
-          only).
+          and CTE-encodes body chunks as they arrive. They write into a caller-owned
+          <code>loopbuf::LoopBuf</code> and hold none of the output; working memory is one call's
+          worth of scratch and the encoder state.
+        </p>
+        <p>
+          Every call is atomic: it appends everything it was asked to or nothing, and leaves the writer
+          as it was. A <code>WriteError</code> says why it failed.
+          <code>is_would_block()</code> means the ring has no room right now: drain it and repeat the same
+          call. <code>ErrorKind::InvalidInput</code> means the call can never succeed: it needs more room than
+          the whole ring has, it is not valid in the writer&rsquo;s state (a body before
+          <code>end_headers</code>), or what it was given is not valid MIME (a bare CR in a 7bit body, a body
+          that contains the multipart boundary).
         </p>
 
         <h3>Single part</h3>
-<pre><code>use rmimeparser::{ContentType, MimeWriter};
+<pre><code>use loopbuf::LoopBuf;
+use rmimeparser::{ContentType, MimeWriter};
 
-let mut out = Vec::new();
-let mut w = MimeWriter::new(&amp;mut out);
+let mut ring = LoopBuf::with_capacity(8192);
+let mut w = MimeWriter::new();
 
-w.start_entity(None)?;
-w.content_type(&amp;ContentType::new("text", "plain", None))?;
-w.content_transfer_encoding("base64")?;
-w.end_headers()?;
+w.start_entity(&amp;mut ring, None)?;
+w.content_type(&amp;mut ring, &amp;ContentType::new("text", "plain", None))?;
+w.content_transfer_encoding(&amp;mut ring, "base64")?;
+w.end_headers(&amp;mut ring)?;
 
-// Logical body octets — call as many times as you like.
-w.body_content(b"Hello")?;
-w.body_content(b" world")?;
+// Logical body octets — call as many times as you like. It returns how many it
+// took: as many as fit in the ring, so loop until the rest has gone in.
+let mut rest: &amp;[u8] = b"Hello world";
+while !rest.is_empty() {
+    match w.body_content(&amp;mut ring, rest) {
+        Ok(taken) => rest = &amp;rest[taken..],
+        Err(e) if e.is_would_block() => { /* write the ring out to the socket, then retry */ }
+        Err(e) => return Err(e.into()),
+    }
+}
 
-w.end_entity(None)?;
+w.end_entity(&amp;mut ring, None)?;
 w.close()?;</code></pre>
 
         <ul>
@@ -583,7 +601,7 @@ w.close()?;</code></pre>
             <code>body_content</code> takes <em>logical</em> bytes; the writer encodes to base64 / quoted-printable
             when those CTEs are set. For <code>7bit</code>, high bytes and NULs are rejected.
           </li>
-          <li>Finish every open entity with matching <code>end_entity</code>, then <code>close()</code>.</li>
+          <li>Finish every open entity with matching <code>end_entity</code>, then <code>close()</code>, which writes nothing and so takes no ring. <code>reset()</code> readies the writer for another message.</li>
         </ul>
         <p>
           Advanced: <code>header_raw_value</code> / writer <code>raw_header</code> /
@@ -592,25 +610,26 @@ w.close()?;</code></pre>
         </p>
 
         <h3>RFC 5322 message writer</h3>
-<pre><code>use rmimeparser::{
+<pre><code>use loopbuf::LoopBuf;
+use rmimeparser::{
     ContentType, EmailAddress, MessageWriter, OffsetDateTime,
 };
 
-let mut out = Vec::new();
-let mut w = MessageWriter::new(&amp;mut out);
+let mut ring = LoopBuf::with_capacity(8192);
+let mut w = MessageWriter::new();
 
-w.start_entity(None)?;
-w.header("Subject", "Café")?;           // RFC 2047 as needed
-w.date_header("Date", OffsetDateTime::new(2024, 6, 15, 12, 0, 0, 0))?;
-w.address_header(
+w.start_entity(&amp;mut ring, None)?;
+w.header(&amp;mut ring, "Subject", "Café")?;           // RFC 2047 as needed
+w.date_header(&amp;mut ring, "Date", OffsetDateTime::new(2024, 6, 15, 12, 0, 0, 0))?;
+w.address_header(&amp;mut ring, 
     "From",
     &amp;[EmailAddress::new(Some("Ada".into()), "ada", "example.com", false)],
 )?;
-w.content_type(&amp;ContentType::new("text", "plain", None))?;
-w.content_transfer_encoding("quoted-printable")?;
-w.end_headers()?;
-w.body_content("Hello café".as_bytes())?;
-w.end_entity(None)?;
+w.content_type(&amp;mut ring, &amp;ContentType::new("text", "plain", None))?;
+w.content_transfer_encoding(&amp;mut ring, "quoted-printable")?;
+w.end_headers(&amp;mut ring)?;
+w.body_content(&amp;mut ring, "Hello café".as_bytes())?; // returns how many bytes it took
+w.end_entity(&amp;mut ring, None)?;
 w.close()?;</code></pre>
       </section>
 
@@ -621,33 +640,34 @@ w.close()?;</code></pre>
           <code>end_entity(Some(boundary))</code> sequence after the parent’s <code>end_headers</code>.
         </p>
         <p>On write, mirror that structure:</p>
-<pre><code>use rmimeparser::{ContentType, MimeVersion, MimeWriter, Parameter};
+<pre><code>use loopbuf::LoopBuf;
+use rmimeparser::{ContentType, MimeVersion, MimeWriter, Parameter};
 
-let mut out = Vec::new();
-let mut w = MimeWriter::new(&amp;mut out);
+let mut ring = LoopBuf::with_capacity(8192);
+let mut w = MimeWriter::new();
 
-w.start_entity(None)?;
-w.mime_version(MimeVersion::V1_0)?;
-w.content_type(&amp;ContentType::new(
+w.start_entity(&amp;mut ring, None)?;
+w.mime_version(&amp;mut ring, MimeVersion::V1_0)?;
+w.content_type(&amp;mut ring, &amp;ContentType::new(
     "multipart",
     "mixed",
     Some(vec![Parameter::new("boundary", "bound123")]),
 ))?;
-w.end_headers()?;
+w.end_headers(&amp;mut ring)?;
 
-w.start_entity(Some("bound123"))?;
-w.content_type(&amp;ContentType::new("text", "plain", None))?;
-w.end_headers()?;
-w.body_content(b"Part one")?;
-w.end_entity(Some("bound123"))?;
+w.start_entity(&amp;mut ring, Some("bound123"))?;
+w.content_type(&amp;mut ring, &amp;ContentType::new("text", "plain", None))?;
+w.end_headers(&amp;mut ring)?;
+w.body_content(&amp;mut ring, b"Part one")?;
+w.end_entity(&amp;mut ring, Some("bound123"))?;
 
-w.start_entity(Some("bound123"))?;
-w.content_type(&amp;ContentType::new("text", "plain", None))?;
-w.end_headers()?;
-w.body_content(b"Part two")?;
-w.end_entity(Some("bound123"))?;
+w.start_entity(&amp;mut ring, Some("bound123"))?;
+w.content_type(&amp;mut ring, &amp;ContentType::new("text", "plain", None))?;
+w.end_headers(&amp;mut ring)?;
+w.body_content(&amp;mut ring, b"Part two")?;
+w.end_entity(&amp;mut ring, Some("bound123"))?;
 
-w.end_entity(None)?; // emits --bound123--
+w.end_entity(&amp;mut ring, None)?; // emits --bound123--
 w.close()?;</code></pre>
 
         <div class="note warn">
@@ -659,11 +679,11 @@ w.close()?;</code></pre>
       <section id="errors">
         <h2 id="codecs">Transfer encodings</h2>
         <p>The parser decodes <code>Content-Transfer-Encoding</code> bodies as the bytes arrive, so <code>body_content</code> always carries logical bytes: base64, quoted-printable and uuencode (<code>x-uuencode</code>, <code>x-uue</code>, <code>uuencode</code>, <code>uue</code>). Each codec is also a standalone push decoder with one calling convention: <code>decode_base64</code>, <code>decode_quoted_printable</code> and <code>decode_uuencode</code> take <code>(src: &amp;mut &amp;[u8], dst: &amp;mut Vec&lt;u8&gt;, max, end_of_stream)</code>, consume as much of <code>src</code> as they can turn into at most <code>max</code> output bytes, and leave an incomplete trailing unit (a base64 quantum, a soft line break, a uuencode line) in <code>src</code> for the next call unless <code>end_of_stream</code> is set. The <code>Base64Decoder</code>, <code>QuotedPrintableDecoder</code> and <code>UuencodeDecoder</code> types are the same functions behind a name, with <code>estimate_decoded_size</code> for sizing the output.</p>
-        <p>The encoders stream too: <code>Base64Encoder</code>, <code>QuotedPrintableEncoder</code> and <code>UuencodeEncoder</code> take <code>write(out, data)</code> in any chunking and <code>finish(out)</code>, holding at most one partial unit; <code>encode_base64</code>, <code>encode_quoted_printable</code> and <code>encode_uuencode(out, filename, mode, data)</code> do a whole buffer in one call. uuencode's <code>begin</code> line is written on the first <code>write</code>, the "`" and <code>end</code> lines by <code>finish</code>. <code>MimeWriter</code> drives the base64 and quoted-printable encoders itself; a uuencode body needs the filename for its <code>begin</code> line, so it is written with <code>raw_body_content</code> from <code>UuencodeEncoder</code> output.</p>
+        <p>The encoders stream too: <code>Base64Encoder</code>, <code>QuotedPrintableEncoder</code> and <code>UuencodeEncoder</code> take <code>write(out, data)</code> (any <code>std::io::Write</code>, returning <code>io::Result</code>) in any chunking and <code>finish(out)</code>, holding at most one partial unit; <code>encode_base64</code>, <code>encode_quoted_printable</code> and <code>encode_uuencode(out, filename, mode, data)</code> do a whole buffer in one call. uuencode's <code>begin</code> line is written on the first <code>write</code>, the "`" and <code>end</code> lines by <code>finish</code>. <code>MimeWriter</code> drives the base64 and quoted-printable encoders itself; a uuencode body needs the filename for its <code>begin</code> line, so it is written with <code>raw_body_content</code> from <code>UuencodeEncoder</code> output.</p>
         <h2>Errors and limits</h2>
         <ul>
           <li>Parse failures use <code>ParseError</code> / <code>ParseResult</code>; the message says where in the message it was found. A handler callback returns the same <code>ParseResult</code>, and an error from it stops the parse.</li>
-          <li>Write failures use <code>MimeWriteError</code> / <code>WriteResult</code> (I/O, invalid state, validation).</li>
+          <li>Write failures use <code>WriteError</code> / <code>WriteResult</code>, the same type the other writers built on <code>LoopBuf</code> return.</li>
           <li>
             Limits are one struct, <code>ParserLimits</code> (<code>None</code> is no limit), set with
             <code>with_limits</code>, <code>limits_mut</code> or <code>set_limits</code>:

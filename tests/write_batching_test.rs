@@ -1,6 +1,7 @@
 //! Writers must not issue one `write` per byte or per word: callers often
 //! pass an unbuffered `File` or socket.
 
+use loopbuf::LoopBuf;
 use rmimeparser::{
     encode_base64, encode_quoted_printable, encode_uuencode, write_folded_header, ContentType,
     MimeWriter, Parameter,
@@ -64,20 +65,16 @@ fn folded_header_is_one_write() {
 
 #[test]
 fn text_body_is_written_in_runs() {
-    let mut spy = Spy::default();
-    {
-        let mut w = MimeWriter::new(&mut spy);
-        w.start_entity(None).unwrap();
-        w.content_transfer_encoding("8bit").unwrap();
-        w.end_headers().unwrap();
-        let line = "plain text line without anything special\n".repeat(2000);
-        w.body_content(line.as_bytes()).unwrap();
-        w.end_entity(None).unwrap();
-        w.close().unwrap();
-    }
-    // Headers plus one write per line (the LF becomes CRLF), not per byte.
-    assert!(spy.calls < 2 * 2000 + 20, "{} write calls", spy.calls);
-    let text = String::from_utf8(spy.bytes).unwrap();
+    let mut ring = LoopBuf::with_capacity(1 << 20);
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
+    w.content_transfer_encoding(&mut ring, "8bit").unwrap();
+    w.end_headers(&mut ring).unwrap();
+    let line = "plain text line without anything special\n".repeat(2000);
+    assert_eq!(w.body_content(&mut ring, line.as_bytes()).unwrap(), line.len());
+    w.end_entity(&mut ring, None).unwrap();
+    w.close().unwrap();
+    let text = String::from_utf8(ring.spans().to_vec()).unwrap();
     assert!(text.contains("plain text line without anything special\r\nplain text"));
     assert!(!text.contains("\n\n") && !text.replace("\r\n", "").contains('\n'));
 }
@@ -91,50 +88,50 @@ fn text_body_validation_still_applies_inside_runs() {
         ("8bit", b"nul\0byte".as_slice(), false),
         ("8bit", b"bare\rcr".as_slice(), false),
     ] {
-        let mut out = Vec::new();
-        let mut w = MimeWriter::new(&mut out);
-        w.start_entity(None).unwrap();
-        w.content_transfer_encoding(cte).unwrap();
-        w.end_headers().unwrap();
-        assert_eq!(w.body_content(body).is_ok(), expect_ok, "{cte} {body:?}");
+        let mut ring = LoopBuf::with_capacity(4096);
+        let mut w = MimeWriter::new();
+        w.start_entity(&mut ring, None).unwrap();
+        w.content_transfer_encoding(&mut ring, cte).unwrap();
+        w.end_headers(&mut ring).unwrap();
+        assert_eq!(w.body_content(&mut ring, body).is_ok(), expect_ok, "{cte} {body:?}");
     }
 }
 
 #[test]
 fn boundary_in_body_is_still_rejected_across_chunks() {
-    let mut out = Vec::new();
-    let mut w = MimeWriter::new(&mut out);
-    w.start_entity(None).unwrap();
-    w.content_type(&ContentType::new(
+    let mut ring = LoopBuf::with_capacity(4096);
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
+    w.content_type(&mut ring, &ContentType::new(
         "multipart",
         "mixed",
         Some(vec![Parameter::new("boundary", "BND")]),
     ))
     .unwrap();
-    w.end_headers().unwrap();
-    w.start_entity(Some("BND")).unwrap();
-    w.end_headers().unwrap();
-    w.body_content(b"some text\r").unwrap();
-    assert!(w.body_content(b"\n--BN").is_ok());
-    assert!(w.body_content(b"D tail").is_err(), "split delimiter must still be found");
+    w.end_headers(&mut ring).unwrap();
+    w.start_entity(&mut ring, Some("BND")).unwrap();
+    w.end_headers(&mut ring).unwrap();
+    w.body_content(&mut ring, b"some text\r").unwrap();
+    assert!(w.body_content(&mut ring, b"\n--BN").is_ok());
+    assert!(w.body_content(&mut ring, b"D tail").is_err(), "split delimiter must still be found");
 }
 
 #[test]
 fn boundary_lookalikes_are_not_rejected() {
-    let mut out = Vec::new();
-    let mut w = MimeWriter::new(&mut out);
-    w.start_entity(None).unwrap();
-    w.content_type(&ContentType::new(
+    let mut ring = LoopBuf::with_capacity(4096);
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
+    w.content_type(&mut ring, &ContentType::new(
         "multipart",
         "mixed",
         Some(vec![Parameter::new("boundary", "BND")]),
     ))
     .unwrap();
-    w.end_headers().unwrap();
-    w.start_entity(Some("BND")).unwrap();
-    w.end_headers().unwrap();
+    w.end_headers(&mut ring).unwrap();
+    w.start_entity(&mut ring, Some("BND")).unwrap();
+    w.end_headers(&mut ring).unwrap();
     // Carriage returns, dashes and a near miss, in awkward chunks.
     for chunk in [&b"a\r"[..], b"\n-", b"-BN x\r", b"\n\r\n--B", b"NX"] {
-        w.body_content(chunk).unwrap();
+        w.body_content(&mut ring, chunk).unwrap();
     }
 }

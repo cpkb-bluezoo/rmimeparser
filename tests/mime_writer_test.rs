@@ -70,18 +70,19 @@ fn parse_all(raw: &[u8]) -> CollectBody {
 
 #[test]
 fn write_simple_text_7bit() {
-    let mut out = Vec::new();
+    let mut ring = LoopBuf::with_capacity(1 << 16);
     {
-        let mut w = MimeWriter::new(&mut out);
-        w.start_entity(None).unwrap();
+        let mut w = MimeWriter::new();
+        w.start_entity(&mut ring, None).unwrap();
         let ct = ContentTypeParser::parse_str("text/plain; charset=us-ascii").unwrap();
-        w.content_type(&ct).unwrap();
-        w.end_headers().unwrap();
-        w.body_content(b"Hello").unwrap();
-        w.body_content(b" world").unwrap();
-        w.end_entity(None).unwrap();
+        w.content_type(&mut ring, &ct).unwrap();
+        w.end_headers(&mut ring).unwrap();
+        w.body_content(&mut ring, b"Hello").unwrap();
+        w.body_content(&mut ring, b" world").unwrap();
+        w.end_entity(&mut ring, None).unwrap();
         w.close().unwrap();
     }
+    let out = ring.spans().to_vec();
 
     let s = String::from_utf8(out.clone()).unwrap();
     assert!(s.contains("Content-Type: text/plain"));
@@ -98,20 +99,21 @@ fn write_simple_text_7bit() {
 #[test]
 fn write_base64_chunked_round_trip() {
     let payload: Vec<u8> = (0..180u8).collect();
-    let mut out = Vec::new();
+    let mut ring = LoopBuf::with_capacity(1 << 16);
     {
-        let mut w = MimeWriter::new(&mut out);
-        w.start_entity(None).unwrap();
-        w.content_type(&ContentType::new("application", "octet-stream", None))
+        let mut w = MimeWriter::new();
+        w.start_entity(&mut ring, None).unwrap();
+        w.content_type(&mut ring, &ContentType::new("application", "octet-stream", None))
             .unwrap();
-        w.content_transfer_encoding("base64").unwrap();
-        w.end_headers().unwrap();
+        w.content_transfer_encoding(&mut ring, "base64").unwrap();
+        w.end_headers(&mut ring).unwrap();
         for chunk in payload.chunks(13) {
-            w.body_content(chunk).unwrap();
+            w.body_content(&mut ring, chunk).unwrap();
         }
-        w.end_entity(None).unwrap();
+        w.end_entity(&mut ring, None).unwrap();
         w.close().unwrap();
     }
+    let out = ring.spans().to_vec();
 
     let parsed = parse_all(&out);
     assert_eq!(parsed.bodies.len(), 1);
@@ -120,36 +122,37 @@ fn write_base64_chunked_round_trip() {
 
 #[test]
 fn write_multipart_mixed() {
-    let mut out = Vec::new();
+    let mut ring = LoopBuf::with_capacity(1 << 16);
     {
-        let mut w = MimeWriter::new(&mut out);
-        w.start_entity(None).unwrap();
-        w.mime_version(MimeVersion::V1_0).unwrap();
+        let mut w = MimeWriter::new();
+        w.start_entity(&mut ring, None).unwrap();
+        w.mime_version(&mut ring, MimeVersion::V1_0).unwrap();
         let ct = ContentType::new(
             "multipart",
             "mixed",
             Some(vec![Parameter::new("boundary", "bound123")]),
         );
-        w.content_type(&ct).unwrap();
-        w.end_headers().unwrap();
+        w.content_type(&mut ring, &ct).unwrap();
+        w.end_headers(&mut ring).unwrap();
 
-        w.start_entity(Some("bound123")).unwrap();
-        w.content_type(&ContentType::new("text", "plain", None))
+        w.start_entity(&mut ring, Some("bound123")).unwrap();
+        w.content_type(&mut ring, &ContentType::new("text", "plain", None))
             .unwrap();
-        w.end_headers().unwrap();
-        w.body_content(b"Part one").unwrap();
-        w.end_entity(Some("bound123")).unwrap();
+        w.end_headers(&mut ring).unwrap();
+        w.body_content(&mut ring, b"Part one").unwrap();
+        w.end_entity(&mut ring, Some("bound123")).unwrap();
 
-        w.start_entity(Some("bound123")).unwrap();
-        w.content_type(&ContentType::new("text", "plain", None))
+        w.start_entity(&mut ring, Some("bound123")).unwrap();
+        w.content_type(&mut ring, &ContentType::new("text", "plain", None))
             .unwrap();
-        w.end_headers().unwrap();
-        w.body_content(b"Part two").unwrap();
-        w.end_entity(Some("bound123")).unwrap();
+        w.end_headers(&mut ring).unwrap();
+        w.body_content(&mut ring, b"Part two").unwrap();
+        w.end_entity(&mut ring, Some("bound123")).unwrap();
 
-        w.end_entity(None).unwrap();
+        w.end_entity(&mut ring, None).unwrap();
         w.close().unwrap();
     }
+    let out = ring.spans().to_vec();
 
     let s = String::from_utf8(out.clone()).unwrap();
     assert!(s.contains("--bound123\r\n"));
@@ -169,51 +172,51 @@ fn write_multipart_mixed() {
 
 #[test]
 fn rejects_body_before_end_headers() {
-    let mut out = Vec::new();
-    let mut w = MimeWriter::new(&mut out);
-    w.start_entity(None).unwrap();
-    assert!(w.body_content(b"x").is_err());
+    let mut ring = LoopBuf::with_capacity(1 << 16);
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
+    assert!(w.body_content(&mut ring, b"x").is_err());
 }
 
 #[test]
 fn rejects_boundary_in_body() {
-    let mut out = Vec::new();
-    let mut w = MimeWriter::new(&mut out);
-    w.start_entity(None).unwrap();
+    let mut ring = LoopBuf::with_capacity(1 << 16);
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
     let ct = ContentType::new(
         "multipart",
         "mixed",
         Some(vec![Parameter::new("boundary", "abc")]),
     );
-    w.content_type(&ct).unwrap();
-    w.end_headers().unwrap();
+    w.content_type(&mut ring, &ct).unwrap();
+    w.end_headers(&mut ring).unwrap();
 
-    w.start_entity(Some("abc")).unwrap();
-    w.content_type(&ContentType::new("text", "plain", None))
+    w.start_entity(&mut ring, Some("abc")).unwrap();
+    w.content_type(&mut ring, &ContentType::new("text", "plain", None))
         .unwrap();
-    w.end_headers().unwrap();
-    assert!(w.body_content(b"hello\r\n--abc\r\nnope").is_err());
+    w.end_headers(&mut ring).unwrap();
+    assert!(w.body_content(&mut ring, b"hello\r\n--abc\r\nnope").is_err());
 }
 
 #[test]
 fn rejects_7bit_high_byte() {
-    let mut out = Vec::new();
-    let mut w = MimeWriter::new(&mut out);
-    w.start_entity(None).unwrap();
-    w.content_type(&ContentType::new("text", "plain", None))
+    let mut ring = LoopBuf::with_capacity(1 << 16);
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
+    w.content_type(&mut ring, &ContentType::new("text", "plain", None))
         .unwrap();
-    w.end_headers().unwrap();
-    assert!(w.body_content(b"caf\xe9").is_err());
+    w.end_headers(&mut ring).unwrap();
+    assert!(w.body_content(&mut ring, b"caf\xe9").is_err());
 }
 
 #[test]
 fn header_after_body_fails() {
-    let mut out = Vec::new();
-    let mut w = MimeWriter::new(&mut out);
-    w.start_entity(None).unwrap();
-    w.content_type(&ContentType::new("text", "plain", None))
+    let mut ring = LoopBuf::with_capacity(1 << 16);
+    let mut w = MimeWriter::new();
+    w.start_entity(&mut ring, None).unwrap();
+    w.content_type(&mut ring, &ContentType::new("text", "plain", None))
         .unwrap();
-    w.end_headers().unwrap();
-    w.body_content(b"x").unwrap();
-    assert!(w.header("X-Extra", "nope").is_err());
+    w.end_headers(&mut ring).unwrap();
+    w.body_content(&mut ring, b"x").unwrap();
+    assert!(w.header(&mut ring, "X-Extra", "nope").is_err());
 }

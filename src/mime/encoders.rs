@@ -1,9 +1,8 @@
 //! Streaming Content-Transfer-Encoding encoders (constant memory).
 
-use std::io::Write;
+use std::io::{self, Write};
 
 use super::decoders::BASE64_MAX_LINE_LENGTH;
-use super::write_error::WriteResult;
 
 const BASE64_TABLE: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -29,7 +28,7 @@ impl<'w, W: Write, const N: usize> Batch<'w, W, N> {
     /// A fixed-size put compiles to plain stores, unlike a variable-length
     /// copy; the encoders emit 1 to 4 bytes at a time.
     #[inline(always)]
-    fn put_n<const K: usize>(&mut self, bytes: [u8; K]) -> WriteResult<()> {
+    fn put_n<const K: usize>(&mut self, bytes: [u8; K]) -> io::Result<()> {
         if self.len + K > self.buf.len() {
             self.flush()?;
         }
@@ -39,7 +38,7 @@ impl<'w, W: Write, const N: usize> Batch<'w, W, N> {
     }
 
     #[inline]
-    pub(crate) fn put(&mut self, bytes: &[u8]) -> WriteResult<()> {
+    pub(crate) fn put(&mut self, bytes: &[u8]) -> io::Result<()> {
         if bytes.len() > self.buf.len() {
             // Larger than the buffer: no point copying it.
             self.flush()?;
@@ -54,7 +53,7 @@ impl<'w, W: Write, const N: usize> Batch<'w, W, N> {
         Ok(())
     }
 
-    pub(crate) fn flush(&mut self) -> WriteResult<()> {
+    pub(crate) fn flush(&mut self) -> io::Result<()> {
         if self.len > 0 {
             let n = self.len;
             self.len = 0;
@@ -67,6 +66,7 @@ impl<'w, W: Write, const N: usize> Batch<'w, W, N> {
 /// Streaming BASE64 encoder with RFC 2045 76-column wrapping.
 ///
 /// Retains at most 2 pending input bytes and the current line length.
+#[derive(Debug, Clone)]
 pub struct Base64Encoder {
     pending: [u8; 3],
     pending_len: usize,
@@ -88,7 +88,7 @@ impl Base64Encoder {
         }
     }
 
-    pub fn write<W: Write>(&mut self, out: &mut W, mut data: &[u8]) -> WriteResult<()> {
+    pub fn write<W: Write>(&mut self, out: &mut W, mut data: &[u8]) -> io::Result<()> {
         let mut batch = Batch::new(out);
         if self.pending_len > 0 {
             while self.pending_len < 3 && !data.is_empty() {
@@ -116,7 +116,7 @@ impl Base64Encoder {
     }
 
     /// Flush padding and a final CRLF if the last line was non-empty.
-    pub fn finish<W: Write>(&mut self, out: &mut W) -> WriteResult<()> {
+    pub fn finish<W: Write>(&mut self, out: &mut W) -> io::Result<()> {
         let mut batch = Batch::new(out);
         if self.pending_len > 0 {
             let mut chunk = [0u8; 3];
@@ -139,7 +139,7 @@ impl Base64Encoder {
         batch: &mut Batch<'_, W>,
         data: &[u8],
         len: usize,
-    ) -> WriteResult<()> {
+    ) -> io::Result<()> {
         let b0 = data[0] as u32;
         let b1 = if len > 1 { data[1] as u32 } else { 0 };
         let b2 = if len > 2 { data[2] as u32 } else { 0 };
@@ -174,6 +174,7 @@ impl Base64Encoder {
 ///
 /// Holds at most one pending SPACE/TAB so trailing whitespace before CRLF/EOS
 /// can be encoded without buffering the body.
+#[derive(Debug, Clone)]
 pub struct QuotedPrintableEncoder {
     line_len: usize,
     pending_ws: Option<u8>,
@@ -196,7 +197,7 @@ impl QuotedPrintableEncoder {
         }
     }
 
-    pub fn write<W: Write>(&mut self, out: &mut W, data: &[u8]) -> WriteResult<()> {
+    pub fn write<W: Write>(&mut self, out: &mut W, data: &[u8]) -> io::Result<()> {
         let mut batch = Batch::new(out);
         let mut i = 0usize;
         if self.pending_cr {
@@ -276,7 +277,7 @@ impl QuotedPrintableEncoder {
         batch.flush()
     }
 
-    pub fn finish<W: Write>(&mut self, out: &mut W) -> WriteResult<()> {
+    pub fn finish<W: Write>(&mut self, out: &mut W) -> io::Result<()> {
         let mut batch = Batch::new(out);
         if self.pending_cr {
             // A CR at the very end is data, not a line break.
@@ -294,7 +295,7 @@ impl QuotedPrintableEncoder {
         &mut self,
         batch: &mut Batch<'_, W>,
         encode: bool,
-    ) -> WriteResult<()> {
+    ) -> io::Result<()> {
         if let Some(b) = self.pending_ws.take() {
             self.emit_byte(batch, b, encode)?;
         }
@@ -307,7 +308,7 @@ impl QuotedPrintableEncoder {
         batch: &mut Batch<'_, W>,
         b: u8,
         encode: bool,
-    ) -> WriteResult<()> {
+    ) -> io::Result<()> {
         let encoded_len = if encode { 3 } else { 1 };
         if self.line_len + encoded_len > BASE64_MAX_LINE_LENGTH - 1 && self.line_len > 0 {
             batch.put_n(*b"=\r\n")?;
@@ -349,14 +350,14 @@ const QP_CLASS: [u8; 256] = {
 };
 
 /// Encode the entire buffer as BASE64 (O(1) auxiliary memory).
-pub fn encode_base64<W: Write>(out: &mut W, data: &[u8]) -> WriteResult<()> {
+pub fn encode_base64<W: Write>(out: &mut W, data: &[u8]) -> io::Result<()> {
     let mut enc = Base64Encoder::new();
     enc.write(out, data)?;
     enc.finish(out)
 }
 
 /// Encode the entire buffer as quoted-printable.
-pub fn encode_quoted_printable<W: Write>(out: &mut W, data: &[u8]) -> WriteResult<()> {
+pub fn encode_quoted_printable<W: Write>(out: &mut W, data: &[u8]) -> io::Result<()> {
     let mut enc = QuotedPrintableEncoder::new();
     enc.write(out, data)?;
     enc.finish(out)
@@ -386,14 +387,14 @@ impl UuencodeEncoder {
         }
     }
 
-    fn write_begin<W: Write>(&mut self, out: &mut W) -> WriteResult<()> {
+    fn write_begin<W: Write>(&mut self, out: &mut W) -> io::Result<()> {
         if let Some(b) = self.begin.take() {
             out.write_all(b.as_bytes())?;
         }
         Ok(())
     }
 
-    pub fn write<W: Write>(&mut self, out: &mut W, mut data: &[u8]) -> WriteResult<()> {
+    pub fn write<W: Write>(&mut self, out: &mut W, mut data: &[u8]) -> io::Result<()> {
         self.write_begin(out)?;
         let mut batch = Batch::new(out);
         let line = super::decoders::UUENCODE_LINE_BYTES;
@@ -412,7 +413,7 @@ impl UuencodeEncoder {
     }
 
     /// Flush the last partial line and write the "`" and `end` lines.
-    pub fn finish<W: Write>(&mut self, out: &mut W) -> WriteResult<()> {
+    pub fn finish<W: Write>(&mut self, out: &mut W) -> io::Result<()> {
         self.write_begin(out)?;
         let mut batch = Batch::new(out);
         if self.pending_len > 0 {
@@ -438,7 +439,7 @@ fn uu_encode_char(v: u32) -> u8 {
 
 /// One encoded line for up to 45 bytes: length character, groups of four,
 /// CRLF.
-fn encode_uu_line<W: Write>(batch: &mut Batch<'_, W>, bytes: &[u8]) -> WriteResult<()> {
+fn encode_uu_line<W: Write>(batch: &mut Batch<'_, W>, bytes: &[u8]) -> io::Result<()> {
     // 1 length character + 15 groups of 4 + CRLF
     let mut line = [0u8; 64];
     let mut n = 0;
@@ -461,7 +462,7 @@ fn encode_uu_line<W: Write>(batch: &mut Batch<'_, W>, bytes: &[u8]) -> WriteResu
 }
 
 /// Encode `data` as one complete uuencode section (`begin` … `end`).
-pub fn encode_uuencode<W: Write>(out: &mut W, filename: &str, mode: u32, data: &[u8]) -> WriteResult<()> {
+pub fn encode_uuencode<W: Write>(out: &mut W, filename: &str, mode: u32, data: &[u8]) -> io::Result<()> {
     let mut enc = UuencodeEncoder::new(filename, mode);
     enc.write(out, data)?;
     enc.finish(out)

@@ -42,26 +42,19 @@ impl MessageHandler for Capture {
     }
 }
 
-/// A ring holding `bytes`, with room to spare.
-fn ring(bytes: &[u8]) -> LoopBuf {
-    let mut buf = LoopBuf::with_capacity(bytes.len() + 2048);
-    buf.extend_from_slice(bytes);
-    buf
-}
-
 #[test]
 fn write_message_with_subject_and_date() {
-    let mut out = Vec::new();
+    let mut ring = LoopBuf::with_capacity(1 << 16);
     {
-        let mut w = MessageWriter::new(&mut out);
-        w.start_entity(None).unwrap();
-        w.header("Subject", "Café résumé").unwrap();
-        w.date_header(
+        let mut w = MessageWriter::new();
+        w.start_entity(&mut ring, None).unwrap();
+        w.header(&mut ring, "Subject", "Café résumé").unwrap();
+        w.date_header(&mut ring, 
             "Date",
             OffsetDateTime::new(2024, 6, 15, 12, 30, 0, 0),
         )
         .unwrap();
-        w.address_header(
+        w.address_header(&mut ring, 
             "From",
             &[EmailAddress::new(
                 Some("José".into()),
@@ -71,14 +64,15 @@ fn write_message_with_subject_and_date() {
             )],
         )
         .unwrap();
-        w.content_type(&ContentType::new("text", "plain", None))
+        w.content_type(&mut ring, &ContentType::new("text", "plain", None))
             .unwrap();
-        w.content_transfer_encoding("quoted-printable").unwrap();
-        w.end_headers().unwrap();
-        w.body_content("Hello café".as_bytes()).unwrap();
-        w.end_entity(None).unwrap();
+        w.content_transfer_encoding(&mut ring, "quoted-printable").unwrap();
+        w.end_headers(&mut ring).unwrap();
+        w.body_content(&mut ring, "Hello café".as_bytes()).unwrap();
+        w.end_entity(&mut ring, None).unwrap();
         w.close().unwrap();
     }
+    let out = ring.spans().to_vec();
 
     let wire = String::from_utf8_lossy(&out);
     assert!(wire.contains("Subject:"));
@@ -89,7 +83,8 @@ fn write_message_with_subject_and_date() {
     let mut capture = Capture::default();
     {
         let mut parser = MessageParser::new(&mut capture);
-        let mut input = ring(&out);
+        let mut input = LoopBuf::with_capacity(out.len() + 2048);
+        input.extend_from_slice(&out);
         parser.receive(&mut input).unwrap();
         parser.close(&mut input).unwrap();
     }

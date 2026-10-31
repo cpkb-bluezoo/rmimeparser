@@ -40,7 +40,7 @@ pub use utils::{
     decode_header_bytes, decode_slice, decode_token_header_value, index_of, is_special, is_token,
     is_valid_boundary, MIMEUtils,
 };
-pub use write_error::{MimeWriteError, WriteResult};
+pub use write_error::{WriteError, WriteResult};
 pub use writer::MimeWriter;
 
 // Gumdrop-style aliases
