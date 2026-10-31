@@ -8,7 +8,7 @@ use loopbuf::LoopBuf;
 use crate::mime::error::ParseResult;
 use crate::mime::handler::Locator;
 use crate::mime::limits::ParserLimits;
-use crate::mime::parser::{MessageHeaderState, MimeParser};
+use crate::mime::parser::MimeParser;
 use crate::rfc5322::message_parser::MessageBridge;
 use crate::MessageHandler;
 
@@ -45,6 +45,7 @@ impl<H: MessageHandler> DkimMessageParser<H> {
 
     pub fn set_smtp_utf8(&mut self, smtp_utf8: bool) {
         self.mime.handler_mut().state.smtp_utf8 = smtp_utf8;
+        self.mime.set_utf8_headers(smtp_utf8);
     }
 
     pub fn is_smtp_utf8(&self) -> bool {
@@ -109,7 +110,7 @@ impl<H: MessageHandler> DkimMessageParser<H> {
 
     pub fn reset(&mut self) {
         self.mime.reset();
-        self.mime.handler_mut().state = MessageHeaderState::default();
+        self.mime.handler_mut().reset();
         self.mime.wire_mut().clear();
     }
 

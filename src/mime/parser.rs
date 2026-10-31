@@ -14,7 +14,7 @@ use crate::mime::decoders::{
     decode_base64, decode_quoted_printable, decode_uuencode, is_base64_char,
 };
 use crate::mime::error::{ParseError, ParseResult};
-use crate::mime::handler::{Locator, MimeHandler, SharedLocator};
+use crate::mime::handler::{HeaderDelivery, Locator, MimeHandler, SharedLocator};
 use crate::mime::limits::ParserLimits;
 use crate::mime::messages::{
     format_header_value_too_long, format_unclosed_boundary, MIMEMessages,
@@ -22,16 +22,11 @@ use crate::mime::messages::{
 use crate::mime::utils::{decode_token_header_value, index_of, is_token,
                          is_valid_boundary};
 use crate::mime::wire_sink::{MimeWireSink, NoWire};
+use crate::rfc2047::HeaderTextDecoder;
 
 const INITIAL_HEADER_VALUE_CAPACITY: usize = 1024;
 const DEFAULT_BUFFER_SIZE: usize = 8192;
 const DEFAULT_CHUNK_SIZE: usize = 4096;
-
-#[derive(Debug, Default, Clone)]
-pub struct MessageHeaderState {
-    pub smtp_utf8: bool,
-    pub used_obsolete_syntax: bool,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundaryMatch {
@@ -55,6 +50,18 @@ enum TransferEncoding {
     Base64,
     QuotedPrintable,
     Uuencode,
+}
+
+/// How the value of the header being read is dealt with.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ValueMode {
+    /// One of the headers the parser understands: its value is collected
+    /// whole (up to `max_header_value_size`) and parsed when it is complete.
+    Buffered,
+    /// Decoded and handed to the handler as it arrives.
+    Unstructured,
+    /// Handed to the handler as it arrives, undecoded.
+    Raw,
 }
 
 /// Where the body scanner is within a line (multipart states only).
@@ -111,6 +118,11 @@ pub struct MimeParser<H: MimeHandler, W: MimeWireSink = NoWire> {
     /// Field name of the header being accumulated; the buffers are reused.
     header_name: String,
     header_active: bool,
+    value_mode: ValueMode,
+    /// The bytes of the current header's value so far, however it is dealt with.
+    header_value_len: usize,
+    /// Reads the text of unstructured headers.
+    text_decoder: HeaderTextDecoder,
     header_value_sink: Vec<u8>,
     header_raw_name: Option<String>,
     header_raw_sink: Vec<u8>,
@@ -169,6 +181,9 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             boundary_set: false,
             header_name: String::new(),
             header_active: false,
+            value_mode: ValueMode::Buffered,
+            header_value_len: 0,
+            text_decoder: HeaderTextDecoder::new(false),
             header_value_sink: Vec::with_capacity(INITIAL_HEADER_VALUE_CAPACITY),
             header_raw_name: None,
             header_raw_sink: Vec::new(),
@@ -223,6 +238,13 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
     pub fn set_chunk_size(&mut self, chunk_size: usize) {
         assert!(chunk_size > 0, "chunk size must be positive");
         self.chunk_size = chunk_size;
+    }
+
+    /// With `utf8_headers`, raw 8-bit text in an unstructured header's value that
+    /// is not valid UTF-8 is read as ISO-8859-1, rather than as windows-1252.
+    /// (Valid UTF-8 is read as UTF-8 either way.) Call before parsing.
+    pub fn set_utf8_headers(&mut self, utf8_headers: bool) {
+        self.text_decoder = HeaderTextDecoder::new(utf8_headers);
     }
 
     /// The handler the parser is driving.
@@ -421,6 +443,8 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         self.boundary_set = false;
         self.header_name.clear();
         self.header_active = false;
+        self.header_value_len = 0;
+        self.text_decoder.reset();
         self.header_value_sink.clear();
         self.header_raw_name = None;
         self.header_raw_sink.clear();
@@ -521,12 +545,7 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
                 self.check_header_size(self.header_raw_sink.len(), line.len())?;
                 self.header_raw_sink.extend_from_slice(line);
             }
-            if length > 0 {
-                self.check_header_size(self.header_value_sink.len(), length)?;
-                self.header_value_sink
-                    .extend_from_slice(&line[start..start + length]);
-            }
-            return Ok(());
+            return self.feed_value(&line[start..start + length]);
         }
 
         if capture {
@@ -569,19 +588,67 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             }
         }
 
+        if self
+            .limits
+            .max_header_name_length
+            .is_some_and(|max| name_end - start > max)
+        {
+            return Err(ParseError::with_locator(
+                MIMEMessages::HEADER_NAME_TOO_LONG,
+                &*self.locator,
+            ));
+        }
+
         // Validated above as printable ASCII, so this is plain UTF-8.
         self.header_name.clear();
         self.header_name
             .extend(line[start..name_end].iter().map(|&b| b as char));
         self.header_active = true;
+        self.header_value_len = 0;
+        self.start_value()?;
 
-        let value_length = end.saturating_sub(colon_pos + 1);
-        if value_length > 0 {
-            self.check_header_size(self.header_value_sink.len(), value_length)?;
-            self.header_value_sink
-                .extend_from_slice(&line[colon_pos + 1..end]);
+        self.feed_value(&line[colon_pos + 1..end])
+    }
+
+    /// Decides how the value of the header just named is dealt with, and tells
+    /// the handler it is starting if it is for the handler.
+    fn start_value(&mut self) -> ParseResult<()> {
+        if is_understood_header(&self.header_name) {
+            self.value_mode = ValueMode::Buffered;
+            return Ok(());
         }
+        self.value_mode = match self.handler.header_delivery(&self.header_name) {
+            HeaderDelivery::Unstructured => {
+                self.text_decoder.reset();
+                ValueMode::Unstructured
+            }
+            HeaderDelivery::Raw => ValueMode::Raw,
+        };
+        self.handler.start_header(&self.header_name)
+    }
 
+    /// Some of the current header's value, with its folds taken out.
+    fn feed_value(&mut self, bytes: &[u8]) -> ParseResult<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        match self.value_mode {
+            ValueMode::Buffered => {
+                self.check_header_size(self.header_value_sink.len(), bytes.len())?;
+                self.header_value_sink.extend_from_slice(bytes);
+            }
+            ValueMode::Unstructured => {
+                let handler = &mut self.handler;
+                self.text_decoder
+                    .feed(bytes, &mut |text| handler.header_content(text))?;
+            }
+            ValueMode::Raw => {
+                // A layer that takes a header raw may hold it, so it is bounded
+                self.check_header_size(self.header_value_len, bytes.len())?;
+                self.header_value_len += bytes.len();
+                self.handler.raw_header_content(bytes)?;
+            }
+        }
         Ok(())
     }
 
@@ -591,21 +658,25 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             return Ok(());
         }
         self.header_active = false;
-        let name = std::mem::take(&mut self.header_name);
-        let value = std::mem::take(&mut self.header_value_sink);
-        let result = self.dispatch_header(&name, &value);
-        self.header_name = name;
-        self.header_name.clear();
-        self.header_value_sink = value;
-        self.header_value_sink.clear();
-        result
-    }
-
-    fn dispatch_header(&mut self, name: &str, value: &[u8]) -> ParseResult<()> {
-        if self.handler.pre_mime_header(name, value)? {
-            return Ok(());
+        self.header_value_len = 0;
+        match self.value_mode {
+            ValueMode::Buffered => {
+                let name = std::mem::take(&mut self.header_name);
+                let value = std::mem::take(&mut self.header_value_sink);
+                let result = self.header(&name, &value);
+                self.header_name = name;
+                self.header_name.clear();
+                self.header_value_sink = value;
+                self.header_value_sink.clear();
+                result
+            }
+            ValueMode::Unstructured => {
+                let handler = &mut self.handler;
+                self.text_decoder.finish(&mut |text| handler.header_content(text))?;
+                self.handler.end_header()
+            }
+            ValueMode::Raw => self.handler.end_header(),
         }
-        self.header(name, value)
     }
 
     fn header(&mut self, name: &str, value: &[u8]) -> ParseResult<()> {
@@ -618,8 +689,6 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
             self.handle_content_transfer_encoding_header(value)
         } else if is("content-id") {
             self.handle_content_id_header(value)
-        } else if is("content-description") {
-            self.handle_content_description_header(value)
         } else if is("mime-version") {
             self.handle_mime_version_header(value)
         } else {
@@ -690,13 +759,6 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         if let Some(id) = ContentIdParser::parse(&mut cursor, HeaderCharset::Iso88591) {
             self.handler.content_id(&id)?;
         }
-        Ok(())
-    }
-
-    fn handle_content_description_header(&mut self, value: &[u8]) -> ParseResult<()> {
-        let mut slice = value;
-        let value_str = decode_token_header_value(&mut slice, self.strip_header_whitespace);
-        self.handler.content_description(&value_str)?;
         Ok(())
     }
 
@@ -1238,6 +1300,20 @@ pub fn check_boundary(line: &[u8], boundary: &str) -> Option<BoundaryMatch> {
             }
         }
     }
+}
+
+/// The headers the parser understands itself; every other header is delivered
+/// to the handler.
+fn is_understood_header(name: &str) -> bool {
+    [
+        "content-type",
+        "content-disposition",
+        "content-transfer-encoding",
+        "content-id",
+        "mime-version",
+    ]
+    .iter()
+    .any(|known| name.eq_ignore_ascii_case(known))
 }
 
 fn is_header_whitespace(b: u8) -> bool {

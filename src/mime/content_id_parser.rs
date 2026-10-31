@@ -2,7 +2,7 @@
 
 use crate::buffer::ByteCursor;
 use crate::charset::HeaderCharset;
-use crate::rfc5322::MessageIdParser;
+use super::message_id_parser::MessageIdParser;
 
 use super::content_types::ContentId;
 

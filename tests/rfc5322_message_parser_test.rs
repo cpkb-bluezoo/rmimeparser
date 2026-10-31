@@ -14,6 +14,7 @@ struct TestMessageHandler {
     message_id_headers: HashMap<String, Vec<ContentId>>,
     unstructured_headers: HashMap<String, String>,
     unexpected_headers: HashMap<String, String>,
+    current_header: (String, String),
     content_type: Option<ContentType>,
     mime_version: Option<MimeVersion>,
     body: Vec<u8>,
@@ -28,6 +29,7 @@ impl TestMessageHandler {
             message_id_headers: HashMap::new(),
             unstructured_headers: HashMap::new(),
             unexpected_headers: HashMap::new(),
+            current_header: Default::default(),
             content_type: None,
             mime_version: None,
             body: Vec::new(),
@@ -50,6 +52,22 @@ impl TestMessageHandler {
 
 impl MimeHandler for TestMessageHandler {
     fn set_locator(&mut self, _locator: Rc<dyn Locator>) {}
+
+    fn start_header(&mut self, name: &str) -> ParseResult<()> {
+        self.current_header = (name.to_string(), String::new());
+        Ok(())
+    }
+
+    fn header_content(&mut self, text: &str) -> ParseResult<()> {
+        self.current_header.1.push_str(text);
+        Ok(())
+    }
+
+    fn end_header(&mut self) -> ParseResult<()> {
+        let (name, value) = std::mem::take(&mut self.current_header);
+        self.unstructured_headers.insert(name, value);
+        Ok(())
+    }
 
     fn start_entity(&mut self, _boundary: Option<&str>) -> ParseResult<()> {
         self.entity_count += 1;
@@ -77,12 +95,6 @@ impl MimeHandler for TestMessageHandler {
 }
 
 impl MessageHandler for TestMessageHandler {
-    fn header(&mut self, name: &str, value: &str) -> ParseResult<()> {
-        self.unstructured_headers
-            .insert(name.to_string(), value.to_string());
-        Ok(())
-    }
-
     fn unexpected_header(&mut self, name: &str, value: &str) -> ParseResult<()> {
         self.unexpected_headers
             .insert(name.to_string(), value.to_string());

@@ -16,7 +16,7 @@ pub use dkim::{DkimMessageParser, RawHeader};
 pub use mime::{
     Base64Decoder, Base64Encoder, ContentDisposition, ContentDispositionParser, ContentId,
     ContentIdParser, ContentType, ContentTypeParser, DefaultHandler, Handler,
-    Locator, MIMEMessages, MimeHandler, MimeParser, MimeVersion, MimeWriter,
+    HeaderDelivery, Locator, MIMEMessages, MimeHandler, MimeParser, MimeVersion, MimeWriter,
     Parameter, ParseError, ParseResult, ParserLimits, QuotedPrintableDecoder,
     QuotedPrintableEncoder, MIMEUtils, WriteError, WriteResult, decode_base64, decode_header_bytes, decode_quoted_printable,
     decode_slice, decode_token_header_value, decode_uuencode, encode_base64,
@@ -25,7 +25,7 @@ pub use mime::{
     is_valid_boundary, write_folded_header, UuencodeDecoder, UuencodeEncoder,
     BASE64_MAX_LINE_LENGTH, HARD_LINE_LIMIT, SOFT_LINE_LIMIT, UUENCODE_LINE_BYTES,
 };
-pub use rfc2047::{Decoder as Rfc2047Decoder, Encoder as Rfc2047Encoder};
+pub use rfc2047::{Decoder as Rfc2047Decoder, Encoder as Rfc2047Encoder, HeaderTextDecoder};
 pub use rfc2231::Decoder as Rfc2231Decoder;
 pub use rfc5322::{
     Address, EmailAddress, EmailAddressParser, GroupEmailAddress, MessageDateTimeFormatter,

@@ -121,7 +121,7 @@ fn bytes_to_windows1252(bytes: &[u8]) -> String {
     out
 }
 
-const WINDOWS_1252: [char; 256] = {
+pub(crate) const WINDOWS_1252: [char; 256] = {
     let mut table = [0u8 as char; 256];
     let mut i = 0usize;
     while i < 256 {

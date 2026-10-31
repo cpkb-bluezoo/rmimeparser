@@ -3,36 +3,31 @@
 use crate::buffer::ByteCursor;
 use crate::charset::HeaderCharset;
 use crate::mime::error::ParseResult;
-use crate::mime::parser::MessageHeaderState;
+use crate::rfc5322::message_parser::MessageHeaderState;
 use crate::mime::utils::{decode_header_bytes, decode_token_header_value};
 use crate::rfc2047::Decoder as Rfc2047Decoder;
 use crate::rfc5322::email_address_parser::EmailAddressParser;
 use crate::rfc5322::message_date_time::MessageDateTimeFormatter;
 use crate::rfc5322::message_handler::MessageHandler;
-use crate::rfc5322::message_id_parser::MessageIdParser;
+use crate::mime::MessageIdParser;
 use crate::rfc5322::obsolete_parser_utils::ObsoleteParserUtils;
 use crate::rfc5322::obsolete_structure_type::ObsoleteStructureType;
 
-pub fn dispatch_rfc5322_header<H: MessageHandler + ?Sized>(
-    strip_header_whitespace: bool,
-    state: &mut MessageHeaderState,
-    handler: &mut H,
-    name: &str,
-    value: &[u8],
-) -> ParseResult<bool> {
+/// The RFC 5322 headers this layer parses itself, so asks the MIME parser to
+/// hand it raw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RawKind {
+    Date,
+    Address,
+    MessageId,
+}
+
+/// Which kind, if any, of header `name` is (case-insensitively). Every other
+/// header, known or not, is unstructured.
+pub(crate) fn classify(name: &str) -> Option<RawKind> {
     let mut buf = [0u8; LOWER_NAME_MAX];
-    let lower = lowercase_name(name, &mut buf);
-    match lower {
-        "content-type"
-        | "content-disposition"
-        | "content-transfer-encoding"
-        | "content-id"
-        | "content-description"
-        | "mime-version" => Ok(false),
-        "date" | "resent-date" => {
-            handle_date_header(state, handler, name, value)?;
-            Ok(true)
-        }
+    match lowercase_name(name, &mut buf) {
+        "date" | "resent-date" => Some(RawKind::Date),
         "from"
         | "sender"
         | "to"
@@ -50,25 +45,31 @@ pub fn dispatch_rfc5322_header<H: MessageHandler + ?Sized>(
         | "delivered-to"
         | "x-original-to"
         | "errors-to"
-        |         "apparently-to" => {
-            handle_address_header(strip_header_whitespace, state, handler, name, value)?;
-            Ok(true)
-        }
+        | "apparently-to" => Some(RawKind::Address),
         "message-id" | "in-reply-to" | "references" | "resent-message-id" => {
-            handle_message_id_header(strip_header_whitespace, state, handler, name, value)?;
-            Ok(true)
+            Some(RawKind::MessageId)
         }
-        "received" => {
-            let value_str = decode_header_value_with_rfc2047(strip_header_whitespace, state, value);
-            handler.header(name, &value_str)?;
-            Ok(true)
+        _ => None,
+    }
+}
+
+/// Parses a header of `kind` whose whole raw value is `value`.
+pub(crate) fn dispatch_raw<H: MessageHandler + ?Sized>(
+    kind: RawKind,
+    strip_header_whitespace: bool,
+    state: &mut MessageHeaderState,
+    handler: &mut H,
+    name: &str,
+    value: &[u8],
+) -> ParseResult<()> {
+    match kind {
+        RawKind::Date => handle_date_header(state, handler, name, value),
+        RawKind::Address => {
+            handle_address_header(strip_header_whitespace, state, handler, name, value)
         }
-        _ if is_unstructured_header(lower) => {
-            let value_str = decode_header_value_with_rfc2047(strip_header_whitespace, state, value);
-            handler.header(name, &value_str)?;
-            Ok(true)
+        RawKind::MessageId => {
+            handle_message_id_header(strip_header_whitespace, state, handler, name, value)
         }
-        _ => Ok(false),
     }
 }
 
@@ -168,22 +169,15 @@ fn header_charset(state: &MessageHeaderState) -> HeaderCharset {
     }
 }
 
-fn is_unstructured_header(lower_name: &str) -> bool {
-    matches!(lower_name, "subject" | "comments" | "keywords" | "received")
-        || lower_name.starts_with("x-")
-}
-
-/// Longest header name matched by [`dispatch_rfc5322_header`] other than the
-/// open-ended `x-` family.
+/// Longest header name [`classify`] matches.
 const LOWER_NAME_MAX: usize = 32;
 
 /// Lowercases `name` into `buf` without allocating. A name too long to be
-/// any known header is reduced to `"x-"` (the open-ended family) or to the
-/// empty string, neither of which matches a known name.
+/// any known header is reduced to the empty string, which matches none.
 fn lowercase_name<'b>(name: &str, buf: &'b mut [u8; LOWER_NAME_MAX]) -> &'b str {
     let bytes = name.as_bytes();
     if bytes.len() > LOWER_NAME_MAX {
-        return if bytes[..2].eq_ignore_ascii_case(b"x-") { "x-" } else { "" };
+        return "";
     }
     let n = bytes.len();
     for i in 0..n {

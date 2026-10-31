@@ -7,6 +7,7 @@ pub mod error;
 pub mod folding;
 pub mod handler;
 pub mod limits;
+pub mod message_id_parser;
 pub mod messages;
 pub mod parameter;
 pub mod parser;
@@ -20,6 +21,7 @@ pub use content_types::{
 };
 pub use content_type_parser::{ContentDispositionParser, ContentTypeParser};
 pub use content_id_parser::ContentIdParser;
+pub use message_id_parser::MessageIdParser;
 pub use decoders::{
     decode_base64, decode_quoted_printable, decode_uuencode, estimate_base64_decoded_size,
     estimate_qp_decoded_size, estimate_uuencode_decoded_size, Base64Decoder,
@@ -31,9 +33,9 @@ pub use encoders::{
 };
 pub use error::{ParseError, ParseResult};
 pub use folding::{write_folded_header, HARD_LINE_LIMIT, SOFT_LINE_LIMIT};
-pub use handler::{DefaultHandler, Handler, Locator, MimeHandler};
+pub use handler::{DefaultHandler, Handler, HeaderDelivery, Locator, MimeHandler};
 pub use limits::ParserLimits;
-pub use parser::{check_boundary, BoundaryMatch, MessageHeaderState, MimeParser};
+pub use parser::{check_boundary, BoundaryMatch, MimeParser};
 pub use messages::MIMEMessages;
 pub use parameter::Parameter;
 pub use utils::{

@@ -9,6 +9,7 @@ impl MIMEMessages {
     pub const HEADER_VALUE_TOO_LONG: &'static str =
         "Unfolded header value exceeds maximum of {0} bytes";
     pub const ILLEGAL_FIELD_NAME_CHAR: &'static str = "Illegal field-name character";
+    pub const HEADER_NAME_TOO_LONG: &'static str = "Header name is too long";
     pub const HEADER_LINE_DOES_NOT_FIT: &'static str =
         "Header line does not fit the receive buffer";
     pub const NO_COLON_IN_HEADER: &'static str = "No colon in header";

@@ -7,12 +7,30 @@ use rmimeparser::{
 #[derive(Default)]
 struct Capture {
     subject: Option<String>,
+    header: (String, String),
     from: Vec<EmailAddress>,
     date: Option<OffsetDateTime>,
     body: Vec<u8>,
 }
 
 impl MimeHandler for Capture {
+    fn start_header(&mut self, name: &str) -> ParseResult<()> {
+        self.header = (name.to_string(), String::new());
+        Ok(())
+    }
+
+    fn header_content(&mut self, text: &str) -> ParseResult<()> {
+        self.header.1.push_str(text);
+        Ok(())
+    }
+
+    fn end_header(&mut self) -> ParseResult<()> {
+        if self.header.0.eq_ignore_ascii_case("subject") {
+            self.subject = Some(std::mem::take(&mut self.header.1));
+        }
+        Ok(())
+    }
+
     fn body_content(&mut self, data: &[u8]) -> ParseResult<()> {
         self.body.extend_from_slice(data);
         Ok(())
@@ -20,13 +38,6 @@ impl MimeHandler for Capture {
 }
 
 impl MessageHandler for Capture {
-    fn header(&mut self, name: &str, value: &str) -> ParseResult<()> {
-        if name.eq_ignore_ascii_case("subject") {
-            self.subject = Some(value.to_string());
-        }
-        Ok(())
-    }
-
     fn address_header(&mut self, name: &str, addresses: &[EmailAddress]) -> ParseResult<()> {
         if name.eq_ignore_ascii_case("from") {
             self.from = addresses.to_vec();

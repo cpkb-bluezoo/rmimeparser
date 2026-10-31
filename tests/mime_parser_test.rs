@@ -2,7 +2,8 @@ use std::rc::Rc;
 
 use loopbuf::LoopBuf;
 use rmimeparser::{
-    decode_slice, index_of, ContentDisposition, ContentType, Locator, MimeHandler, MimeParser,
+    decode_slice, index_of, ContentDisposition, ContentType, HeaderDelivery, Locator, MimeHandler,
+    MimeParser,
     MimeVersion, ParseResult,
 };
 
@@ -14,6 +15,8 @@ struct TestHandler {
     mime_version: Option<MimeVersion>,
     body: Vec<u8>,
     entity_count: usize,
+    /// Unstructured headers, as (name, value).
+    headers: Vec<(String, String)>,
 }
 
 impl TestHandler {
@@ -26,6 +29,7 @@ impl TestHandler {
             mime_version: None,
             body: Vec::new(),
             entity_count: 0,
+            headers: Vec::new(),
         }
     }
 }
@@ -65,6 +69,16 @@ impl MimeHandler for TestHandler {
     fn mime_version(&mut self, version: MimeVersion) -> ParseResult<()> {
         self.events.push(format!("mimeVersion:{version}"));
         self.mime_version = Some(version);
+        Ok(())
+    }
+
+    fn start_header(&mut self, name: &str) -> ParseResult<()> {
+        self.headers.push((name.to_string(), String::new()));
+        Ok(())
+    }
+
+    fn header_content(&mut self, text: &str) -> ParseResult<()> {
+        self.headers.last_mut().unwrap().1.push_str(text);
         Ok(())
     }
 
@@ -300,7 +314,8 @@ fn test_header_value_too_long() {
     let mut parser = MimeParser::new(&mut handler);
     parser.limits_mut().max_header_value_size = Some(50);
 
-    let mut sb = String::from("X: ");
+    // Content-Type is one of the headers the parser holds whole to parse
+    let mut sb = String::from("Content-Type: text/plain; x=");
     for _ in 0..49 {
         sb.push('a');
     }
@@ -308,6 +323,86 @@ fn test_header_value_too_long() {
 
     let err = parse(&mut parser, &sb).unwrap_err();
     assert!(err.message().contains("maximum"));
+}
+
+#[test]
+fn test_unstructured_header_is_streamed_not_held_so_the_value_limit_does_not_apply() {
+    let mut handler = TestHandler::new();
+    let mut parser = MimeParser::new(&mut handler);
+    parser.limits_mut().max_header_value_size = Some(50);
+    // Far past the limit, in many folded lines
+    let mut sb = String::from("X-Long: start\r\n");
+    for _ in 0..200 {
+        sb.push_str(" more text on a folded line\r\n");
+    }
+    sb.push_str("\r\n");
+    parse(&mut parser, &sb).unwrap();
+    let text = &handler.headers[0].1;
+    assert!(text.starts_with("start more text"));
+    assert!(text.len() > 5000);
+    assert!(!text.contains('\r') && !text.contains('\n'));
+    assert_eq!(handler.headers[0].0, "X-Long");
+}
+
+#[test]
+fn test_header_name_too_long() {
+    // The line limit is 998, so it comes first unless it is relaxed
+    let relaxed = |parser: &mut MimeParser<&mut TestHandler>| {
+        parser.limits_mut().max_header_line_length = None;
+    };
+    let mut handler = TestHandler::new();
+    let mut parser = MimeParser::new(&mut handler);
+    relaxed(&mut parser);
+    let sb = format!("{}: v\r\n\r\n", "N".repeat(1025));
+    let err = parse(&mut parser, &sb).unwrap_err();
+    assert!(err.message().contains("name"), "{err}");
+
+    let mut handler = TestHandler::new();
+    let mut parser = MimeParser::new(&mut handler);
+    relaxed(&mut parser);
+    parse(&mut parser, &format!("{}: v\r\n\r\n", "N".repeat(1024))).unwrap();
+}
+
+#[test]
+fn test_every_unknown_header_is_delivered_unstructured_and_the_mime_ones_are_not() {
+    let mut handler = TestHandler::new();
+    let mut parser = MimeParser::new(&mut handler);
+    parse(
+        &mut parser,
+        "Subject: =?UTF-8?Q?caf=C3=A9?= au\r\n lait\r\nContent-Type: text/plain\r\nContent-Description: a\r\n picture\r\nWeird-Header:    padded  \r\n\r\nbody",
+    )
+    .unwrap();
+    assert_eq!(
+        handler.headers,
+        vec![
+            ("Subject".to_string(), "caf\u{e9} au lait".to_string()),
+            ("Content-Description".to_string(), "a picture".to_string()),
+            ("Weird-Header".to_string(), "padded".to_string()),
+        ]
+    );
+    assert!(handler.content_type.is_some());
+}
+
+#[test]
+fn test_unstructured_header_arrives_the_same_whatever_the_chunking() {
+    let msg = "Subject: =?UTF-8?B?Y2Fmw6k=?= =?UTF-8?Q?_au_lait?=\r\n and more\r\n text\r\n\r\nbody";
+    let mut expected = None;
+    for step in [1usize, 2, 3, 5, 11, 1000] {
+        let mut handler = TestHandler::new();
+        let mut parser = MimeParser::new(&mut handler);
+        let mut ring = LoopBuf::with_capacity(4096);
+        for chunk in msg.as_bytes().chunks(step) {
+            ring.extend_from_slice(chunk);
+            parser.receive(&mut ring).unwrap();
+        }
+        parser.close(&mut ring).unwrap();
+        let got = handler.headers.clone();
+        assert_eq!(got[0].1, "caf\u{e9} au lait and more text", "step {step}");
+        match &expected {
+            None => expected = Some(got),
+            Some(e) => assert_eq!(&got, e, "step {step}"),
+        }
+    }
 }
 
 #[test]
@@ -654,4 +749,59 @@ fn test_split_long_boundary() {
 fn test_index_of_helper() {
     assert_eq!(index_of(b"text/plain", b'/'), Some(4));
     assert_eq!(index_of(b"no slash", b'/'), None);
+}
+
+/// A layer on top of MIME takes the headers it parses itself raw.
+struct RawTaker {
+    raw: Vec<(String, Vec<u8>)>,
+    unstructured: Vec<String>,
+}
+
+impl MimeHandler for RawTaker {
+    fn header_delivery(&mut self, name: &str) -> HeaderDelivery {
+        if name.eq_ignore_ascii_case("x-raw") {
+            HeaderDelivery::Raw
+        } else {
+            HeaderDelivery::Unstructured
+        }
+    }
+    fn start_header(&mut self, name: &str) -> ParseResult<()> {
+        if name.eq_ignore_ascii_case("x-raw") {
+            self.raw.push((name.to_string(), Vec::new()));
+        } else {
+            self.unstructured.push(name.to_string());
+        }
+        Ok(())
+    }
+    fn raw_header_content(&mut self, bytes: &[u8]) -> ParseResult<()> {
+        self.raw.last_mut().unwrap().1.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+#[test]
+fn test_a_header_asked_for_raw_arrives_undecoded_and_unfolded() {
+    let mut taker = RawTaker { raw: Vec::new(), unstructured: Vec::new() };
+    let mut parser = MimeParser::new(&mut taker);
+    let msg = "Other: x\r\nX-Raw: =?UTF-8?Q?a?=,  b\r\n\t\"c, d\"\r\n\r\nbody";
+    let mut ring = LoopBuf::with_capacity(msg.len() + 64);
+    ring.extend_from_slice(msg.as_bytes());
+    parser.receive(&mut ring).unwrap();
+    parser.close(&mut ring).unwrap();
+    assert_eq!(taker.unstructured, vec!["Other".to_string()]);
+    assert_eq!(taker.raw.len(), 1);
+    // nothing decoded, the fold's line ending gone and the white space after it kept
+    assert_eq!(taker.raw[0].1, b" =?UTF-8?Q?a?=,  b\t\"c, d\"".to_vec());
+}
+
+#[test]
+fn test_the_value_limit_applies_to_a_header_taken_raw() {
+    let mut taker = RawTaker { raw: Vec::new(), unstructured: Vec::new() };
+    let mut parser = MimeParser::new(&mut taker);
+    parser.limits_mut().max_header_value_size = Some(20);
+    let msg = format!("X-Raw: {}\r\n\r\n", "a".repeat(40));
+    let mut ring = LoopBuf::with_capacity(msg.len() + 64);
+    ring.extend_from_slice(msg.as_bytes());
+    let err = parser.receive(&mut ring).unwrap_err();
+    assert!(err.message().contains("maximum"), "{err}");
 }

@@ -314,7 +314,7 @@ fn decode_adjacent_encoded_words(words: &[EncodedWord<'_>], result: &mut String)
     }
 }
 
-fn decode_single_encoded_word(
+pub(crate) fn decode_single_encoded_word(
     charset: &str,
     encoding: char,
     encoded_text: &str,

@@ -74,6 +74,17 @@ impl Locator for SharedLocator {
     }
 }
 
+/// How the value of a header the parser does not itself understand is
+/// delivered; see [`MimeHandler::header_delivery`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderDelivery {
+    /// As decoded text in [`MimeHandler::header_content`] pieces.
+    Unstructured,
+    /// As the bytes that arrived, in [`MimeHandler::raw_header_content`] pieces,
+    /// for a layer that parses the value itself.
+    Raw,
+}
+
 /// Callback interface for push-based MIME parsing events.
 ///
 /// Override typed methods (`content_type`, `body_content`, …) for normal use.
@@ -84,9 +95,43 @@ pub trait MimeHandler {
     /// live: keep it and read it from inside later callbacks.
     fn set_locator(&mut self, _locator: Rc<dyn Locator>) {}
 
-    /// Return `true` if this header was handled and default MIME dispatch should be skipped.
-    fn pre_mime_header(&mut self, _name: &str, _value: &[u8]) -> ParseResult<bool> {
-        Ok(false)
+    /// Asked once for each header the parser does not itself understand (the
+    /// ones it does are `Content-Type`, `Content-Disposition`,
+    /// `Content-Transfer-Encoding`, `Content-ID` and `MIME-Version`), just
+    /// before [`Self::start_header`]. The answer says how its value arrives.
+    ///
+    /// This is how a layer on top of MIME (RFC 5322 is one) takes the headers
+    /// it understands for itself: it asks for them [`HeaderDelivery::Raw`].
+    fn header_delivery(&mut self, _name: &str) -> HeaderDelivery {
+        HeaderDelivery::Unstructured
+    }
+
+    /// The start of a header the parser does not itself understand. Its value
+    /// follows as [`Self::header_content`] calls, or [`Self::raw_header_content`]
+    /// if [`Self::header_delivery`] asked for it raw, and then [`Self::end_header`].
+    fn start_header(&mut self, _name: &str) -> ParseResult<()> {
+        Ok(())
+    }
+
+    /// A piece of an unstructured header's value, in order: unfolded, with
+    /// leading and trailing white space removed, RFC 2047 encoded words decoded,
+    /// and raw 8-bit text read as UTF-8 where it is valid and as windows-1252
+    /// where it is not. The value is never held whole by the parser, and a piece
+    /// has no particular size.
+    fn header_content(&mut self, _text: &str) -> ParseResult<()> {
+        Ok(())
+    }
+
+    /// A piece of a header's value delivered raw: the bytes as they arrived,
+    /// unfolded (a folded line ending is removed and the white space after it
+    /// kept), with nothing decoded.
+    fn raw_header_content(&mut self, _bytes: &[u8]) -> ParseResult<()> {
+        Ok(())
+    }
+
+    /// The value of the header started by [`Self::start_header`] is complete.
+    fn end_header(&mut self) -> ParseResult<()> {
+        Ok(())
     }
 
     fn start_entity(&mut self, _boundary: Option<&str>) -> ParseResult<()> {
@@ -106,10 +151,6 @@ pub trait MimeHandler {
     }
 
     fn content_id(&mut self, _content_id: &ContentId) -> ParseResult<()> {
-        Ok(())
-    }
-
-    fn content_description(&mut self, _description: &str) -> ParseResult<()> {
         Ok(())
     }
 
@@ -140,8 +181,20 @@ macro_rules! forward_handler {
             fn set_locator(&mut self, locator: Rc<dyn Locator>) {
                 (**self).set_locator(locator)
             }
-            fn pre_mime_header(&mut self, name: &str, value: &[u8]) -> ParseResult<bool> {
-                (**self).pre_mime_header(name, value)
+            fn header_delivery(&mut self, name: &str) -> HeaderDelivery {
+                (**self).header_delivery(name)
+            }
+            fn start_header(&mut self, name: &str) -> ParseResult<()> {
+                (**self).start_header(name)
+            }
+            fn header_content(&mut self, text: &str) -> ParseResult<()> {
+                (**self).header_content(text)
+            }
+            fn raw_header_content(&mut self, bytes: &[u8]) -> ParseResult<()> {
+                (**self).raw_header_content(bytes)
+            }
+            fn end_header(&mut self) -> ParseResult<()> {
+                (**self).end_header()
             }
             fn start_entity(&mut self, boundary: Option<&str>) -> ParseResult<()> {
                 (**self).start_entity(boundary)
@@ -157,9 +210,6 @@ macro_rules! forward_handler {
             }
             fn content_id(&mut self, content_id: &ContentId) -> ParseResult<()> {
                 (**self).content_id(content_id)
-            }
-            fn content_description(&mut self, description: &str) -> ParseResult<()> {
-                (**self).content_description(description)
             }
             fn mime_version(&mut self, version: MimeVersion) -> ParseResult<()> {
                 (**self).mime_version(version)

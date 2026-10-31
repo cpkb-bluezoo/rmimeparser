@@ -9,9 +9,12 @@ use crate::rfc5322::obsolete_structure_type::ObsoleteStructureType;
 
 /// RFC 5322 message handler (extends MIME handler).
 pub trait MessageHandler: MimeHandler {
-    fn header(&mut self, _name: &str, _value: &str) -> ParseResult<()> {
-        Ok(())
-    }
+    /// A header this layer would have parsed (a date, addresses, message-ids)
+    /// that did not parse: its value, decoded as unstructured text.
+    ///
+    /// Every other header, known or not, arrives as unstructured text through
+    /// [`MimeHandler::start_header`], [`MimeHandler::header_content`] and
+    /// [`MimeHandler::end_header`].
     fn unexpected_header(&mut self, _name: &str, _value: &str) -> ParseResult<()> {
         Ok(())
     }
@@ -32,9 +35,6 @@ pub trait MessageHandler: MimeHandler {
 macro_rules! forward_message_handler {
     ($target:ty) => {
         impl<H: MessageHandler + ?Sized> MessageHandler for $target {
-            fn header(&mut self, name: &str, value: &str) -> ParseResult<()> {
-                (**self).header(name, value)
-            }
             fn unexpected_header(&mut self, name: &str, value: &str) -> ParseResult<()> {
                 (**self).unexpected_header(name, value)
             }

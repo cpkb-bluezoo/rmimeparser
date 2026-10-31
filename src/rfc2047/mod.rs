@@ -2,6 +2,8 @@
 
 mod decoder;
 mod encoder;
+mod stream;
 
 pub use decoder::Decoder;
+pub use stream::HeaderTextDecoder;
 pub use encoder::{Encoder, MAX_ENCODED_WORD_LENGTH};

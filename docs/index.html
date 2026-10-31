@@ -320,7 +320,8 @@ assert_eq!(parser.handler().bytes, 7);</code></pre>
         </p>
 <pre><code>set_locator(...)
 start_entity(None)
-  typed header callbacks (content_type, … / header, date_header, …)
+  header callbacks: content_type, … for the MIME headers;
+    start_header, header_content*, end_header for every other header
   end_headers()
   body_content(...)       // transfer-decoded octets (may be chunked)
 end_entity(None)          // from close()</code></pre>
@@ -341,15 +342,24 @@ end_entity(None)          // from close()</code></pre>
               </td>
             </tr>
             <tr>
-              <td class="callback">pre_mime_header</td>
+              <td class="callback">start_header / header_content / end_header</td>
               <td>
-                Every header before MIME-specific dispatch. Return <code>true</code> to skip default
-                MIME handling for that header (used by <code>MessageParser</code>).
+                Every header the parser does not itself understand, <em>unknown ones included</em>:
+                its value as unstructured text, in pieces of no particular size, unfolded and trimmed,
+                RFC&nbsp;2047 encoded words decoded. The parser does not hold the value.
+              </td>
+            </tr>
+            <tr>
+              <td class="callback">header_delivery</td>
+              <td>
+                Asked once per such header, just before <code>start_header</code>. A layer that parses
+                some headers itself (<code>MessageParser</code> does) answers <code>HeaderDelivery::Raw</code>
+                and gets the value as <code>raw_header_content(&amp;[u8])</code>: undecoded, only unfolded.
               </td>
             </tr>
             <tr>
               <td class="callback">content_type</td>
-              <td>Parsed <code>Content-Type</code> (and similarly disposition, CTE, Content-ID, description, MIME-Version).</td>
+              <td>Parsed <code>Content-Type</code> (and similarly disposition, CTE, Content-ID, MIME-Version). These five are the headers the parser understands; everything else is unstructured text.</td>
             </tr>
             <tr>
               <td class="callback">end_headers</td>
@@ -455,31 +465,38 @@ fn parse_stream&lt;R: std::io::Read, H: MimeHandler&gt;(
       <section id="message-parser">
         <h2>RFC 5322 message parser</h2>
         <p>
-          <code>MessageParser</code> wraps <code>MimeParser</code>. Implement <code>MessageHandler</code>
-          (which extends <code>MimeHandler</code>) to get typed address, date, and Message-ID headers
-          in addition to MIME callbacks.
+          <code>MessageParser</code> wraps <code>MimeParser</code>; <code>MessageHandler</code> extends
+          <code>MimeHandler</code>. The MIME layer knows nothing of RFC&nbsp;5322, so anything that needs
+          only MIME (HTTP&rsquo;s <code>multipart/form-data</code>, say) uses <code>MimeParser</code> alone.
+          Implement <code>MessageHandler</code> to get typed address, date, and Message-ID headers
+          in addition to the MIME callbacks.
         </p>
 <pre><code>use loopbuf::LoopBuf;
 use rmimeparser::{MessageHandler, MessageParser, ParseResult};
 
 struct CollectSubject {
     subject: Option&lt;String&gt;,
+    in_subject: bool,
 }
 
-impl MessageHandler for CollectSubject {
-    fn header(&amp;mut self, name: &amp;str, value: &amp;str) -&gt; ParseResult&lt;()&gt; {
-        if name.eq_ignore_ascii_case("subject") {
-            self.subject = Some(value.to_string());
+// A header the parser does not parse arrives as unstructured text in pieces.
+impl rmimeparser::MimeHandler for CollectSubject {
+    fn start_header(&amp;mut self, name: &amp;str) -&gt; ParseResult&lt;()&gt; {
+        self.in_subject = name.eq_ignore_ascii_case("subject");
+        Ok(())
+    }
+    fn header_content(&amp;mut self, text: &amp;str) -&gt; ParseResult&lt;()&gt; {
+        if self.in_subject {
+            self.subject.get_or_insert_with(String::new).push_str(text);
         }
         Ok(())
     }
 }
 
-// MimeHandler methods keep their defaults unless you override them.
-impl rmimeparser::MimeHandler for CollectSubject {}
+impl MessageHandler for CollectSubject {}
 
 let raw = b"Subject: hello\r\n\r\nHi\r\n";
-let mut parser = MessageParser::new(CollectSubject { subject: None });
+let mut parser = MessageParser::new(CollectSubject { subject: None, in_subject: false });
 let mut ring = LoopBuf::with_capacity(8192);
 ring.extend_from_slice(raw);
 parser.receive(&amp;mut ring)?;
@@ -491,8 +508,8 @@ parser.close(&amp;mut ring)?;</code></pre>
           </thead>
           <tbody>
             <tr>
-              <td class="callback">header</td>
-              <td>Unstructured fields such as <code>Subject</code>, <code>Comments</code> (RFC&nbsp;2047 decoded).</td>
+              <td class="callback">start_header / header_content / end_header</td>
+              <td>Every other header, unknown ones included, as unstructured text (these are <code>MimeHandler</code> events): <code>Subject</code>, <code>Comments</code>, <code>Received</code>, <code>X-…</code>, …</td>
             </tr>
             <tr>
               <td class="callback">address_header</td>

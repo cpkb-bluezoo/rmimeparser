@@ -1,8 +1,11 @@
-//! RFC 5322 Message-ID list parser.
+//! Message-ID / Content-ID list parser.
+//!
+//! The `msg-id` grammar is RFC 5322's, but Content-ID (RFC 2045) uses it too, so
+//! it lives with MIME and the RFC 5322 layer re-exports it.
 
 use crate::buffer::ByteCursor;
 use crate::charset::{decode_slice, HeaderCharset};
-use crate::mime::ContentId;
+use super::content_types::ContentId;
 
 /// Message-ID parser.
 pub struct MessageIdParser;
