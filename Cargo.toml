@@ -11,8 +11,7 @@ keywords = ["mime", "email", "rfc5322", "parser", "streaming"]
 categories = ["email", "parser-implementations"]
 
 [dependencies]
-# `path` until a loopbuf release includes what this crate uses.
-loopbuf = { version = "0.2", path = "../loopbuf" }
+loopbuf = "0.2"
 
 [lib]
 name = "rmimeparser"
