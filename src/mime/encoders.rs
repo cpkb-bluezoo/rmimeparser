@@ -217,13 +217,23 @@ impl QuotedPrintableEncoder {
         while i < data.len() {
             let b = data[i];
             match QP_CLASS[b as usize] {
-                QP_PLAIN => {
+                QP_PLAIN | QP_SPACE if self.is_span_start(data, i) => {
                     self.flush_pending_ws(&mut batch, false)?;
-                    // A run of printable ASCII: copied in bulk, split only
-                    // at the soft line break column.
-                    let mut j = i + 1;
-                    while j < data.len() && QP_CLASS[data[j] as usize] == QP_PLAIN {
-                        j += 1;
+                    // A span of printable ASCII, with the white space that has
+                    // a printable byte after it (so is never trailing): copied
+                    // in bulk, split only at the soft line break column.
+                    let mut j = i;
+                    while j < data.len() {
+                        match QP_CLASS[data[j] as usize] {
+                            QP_PLAIN => j += 1,
+                            QP_SPACE
+                                if j + 1 < data.len()
+                                    && QP_CLASS[data[j + 1] as usize] == QP_PLAIN =>
+                            {
+                                j += 2
+                            }
+                            _ => break,
+                        }
                     }
                     let mut run = &data[i..j];
                     while !run.is_empty() {
@@ -240,8 +250,14 @@ impl QuotedPrintableEncoder {
                 }
                 QP_ENCODE => {
                     self.flush_pending_ws(&mut batch, false)?;
-                    self.emit_byte(&mut batch, b, true)?;
-                    i += 1;
+                    // Consecutive bytes that all need escaping.
+                    loop {
+                        self.emit_byte(&mut batch, data[i], true)?;
+                        i += 1;
+                        if i >= data.len() || QP_CLASS[data[i] as usize] != QP_ENCODE {
+                            break;
+                        }
+                    }
                 }
                 QP_SPACE => {
                     self.flush_pending_ws(&mut batch, false)?;
@@ -287,6 +303,16 @@ impl QuotedPrintableEncoder {
         self.flush_pending_ws(&mut batch, true)?;
         self.line_len = 0;
         batch.flush()
+    }
+
+    /// Whether the byte at `i` starts a span that is copied as it is: a
+    /// printable byte, or white space with a printable byte after it.
+    #[inline(always)]
+    fn is_span_start(&self, data: &[u8], i: usize) -> bool {
+        match QP_CLASS[data[i] as usize] {
+            QP_PLAIN => true,
+            _ => i + 1 < data.len() && QP_CLASS[data[i + 1] as usize] == QP_PLAIN,
+        }
     }
 
     #[inline(always)]
