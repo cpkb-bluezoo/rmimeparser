@@ -55,7 +55,14 @@ impl SharedLocator {
         match bytes.iter().rposition(|&b| b == b'\n') {
             None => self.column.set(self.column.get() + bytes.len() as u64),
             Some(last) => {
-                let lines = bytes.iter().filter(|&&b| b == b'\n').count() as u64;
+                let mut lines = 0u64;
+                for chunk in bytes.chunks(4096) {
+                    let mut n = 0u32;
+                    for &b in chunk {
+                        n += (b == b'\n') as u32;
+                    }
+                    lines += n as u64;
+                }
                 self.line.set(self.line.get() + lines);
                 self.column.set((bytes.len() - 1 - last) as u64);
             }

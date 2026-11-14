@@ -58,7 +58,24 @@ pub fn is_boundary_char(c: char) -> bool {
 
 /// Finds the first occurrence of `target` in `data`.
 pub fn index_of(data: &[u8], target: u8) -> Option<usize> {
-    data.iter().position(|&b| b == target)
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const HI: u64 = 0x8080_8080_8080_8080;
+    let pat = LO * target as u64;
+    let mut chunks = data.chunks_exact(8);
+    let mut base = 0usize;
+    for c in &mut chunks {
+        let w = u64::from_le_bytes(c.try_into().unwrap()) ^ pat;
+        let m = w.wrapping_sub(LO) & !w & HI;
+        if m != 0 {
+            return Some(base + (m.trailing_zeros() / 8) as usize);
+        }
+        base += 8;
+    }
+    chunks
+        .remainder()
+        .iter()
+        .position(|&b| b == target)
+        .map(|i| base + i)
 }
 
 /// Decodes ISO-8859-1 header bytes, optionally trimming whitespace.

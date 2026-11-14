@@ -132,6 +132,26 @@ pub fn decode_base64(
     let mut saw_padding = false;
 
     while src_pos < start_len {
+        if quantum_bits == 0 {
+            // Fast path: whole groups of four alphabet characters.
+            while src_pos + 4 <= start_len && dst.len() + 3 <= dst_limit {
+                let g = &src[src_pos..src_pos + 4];
+                let a = DECODE_TABLE[g[0] as usize];
+                let b = DECODE_TABLE[g[1] as usize];
+                let c = DECODE_TABLE[g[2] as usize];
+                let d = DECODE_TABLE[g[3] as usize];
+                if (a | b | c | d) < 0 {
+                    break;
+                }
+                let q = ((a as u32) << 18) | ((b as u32) << 12) | ((c as u32) << 6) | d as u32;
+                dst.extend_from_slice(&[(q >> 16) as u8, (q >> 8) as u8, q as u8]);
+                src_pos += 4;
+                last_valid_src_pos = src_pos;
+            }
+            if src_pos >= start_len {
+                break;
+            }
+        }
         let b = src[src_pos];
         let val = DECODE_TABLE[b as usize];
 
