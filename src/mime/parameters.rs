@@ -196,7 +196,8 @@ impl ParameterParser {
                                 return Ok(Fed::Malformed { reason, rest: i });
                             }
                         }
-                    } else if self.head.len() > 2 * self.max_token + 32 {
+                    } else if self.head.len() > self.max_token.saturating_mul(2).saturating_add(32)
+                    {
                         return Ok(Fed::Malformed {
                             reason: "the media type or disposition type is too long",
                             rest: i,

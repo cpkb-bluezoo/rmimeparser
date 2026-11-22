@@ -15,6 +15,7 @@ impl MIMEMessages {
     pub const NO_COLON_IN_HEADER: &'static str = "No colon in header";
     pub const NO_FIELD_NAME: &'static str = "No field-name";
     pub const NO_HANDLER: &'static str = "No handler set";
+    pub const MULTIPART_TOO_DEEP: &'static str = "Multipart nesting exceeds maximum depth of {0}";
     pub const UNCLOSED_BOUNDARY: &'static str = "Unclosed multipart boundary: {0}";
     pub const UNEXPECTED_PARSER_STATE: &'static str =
         "Unexpected parser state {0} in body processing";
@@ -26,4 +27,8 @@ pub(crate) fn format_header_value_too_long(max_bytes: usize) -> String {
 
 pub(crate) fn format_unclosed_boundary(boundary: &str) -> String {
     MIMEMessages::UNCLOSED_BOUNDARY.replace("{0}", boundary)
+}
+
+pub(crate) fn format_multipart_too_deep(max_depth: usize) -> String {
+    MIMEMessages::MULTIPART_TOO_DEEP.replace("{0}", &max_depth.to_string())
 }

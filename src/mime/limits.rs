@@ -24,6 +24,11 @@ pub struct ParserLimits {
     /// The most a raw-capturing parser ([`crate::DkimMessageParser`]) keeps of
     /// one header, which it retains whole by design. Default: 32768.
     pub max_captured_header_size: Option<usize>,
+    /// The most multipart entities open at once. A `multipart` entity that
+    /// would be one more than this is an error. Only multipart nesting is
+    /// counted: the parser does not descend into `message/rfc822`. RFC 2046
+    /// sets no limit and real mail rarely goes past six. Default: 32.
+    pub max_multipart_depth: Option<usize>,
 }
 
 impl Default for ParserLimits {
@@ -34,6 +39,7 @@ impl Default for ParserLimits {
             max_token_length: Some(256),
             max_element_length: Some(4096),
             max_captured_header_size: Some(32 * 1024),
+            max_multipart_depth: Some(32),
         }
     }
 }
@@ -47,6 +53,7 @@ impl ParserLimits {
             max_token_length: None,
             max_element_length: None,
             max_captured_header_size: None,
+            max_multipart_depth: None,
         }
     }
 }

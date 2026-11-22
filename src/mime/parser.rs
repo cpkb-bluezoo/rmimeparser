@@ -15,7 +15,9 @@ use crate::mime::decoders::{
 use crate::mime::error::{ParseError, ParseResult};
 use crate::mime::handler::{HeaderDelivery, Locator, MimeHandler, SharedLocator};
 use crate::mime::limits::ParserLimits;
-use crate::mime::messages::{format_header_value_too_long, format_unclosed_boundary, MIMEMessages};
+use crate::mime::messages::{
+    format_header_value_too_long, format_multipart_too_deep, format_unclosed_boundary, MIMEMessages,
+};
 use crate::mime::parameters::{Fed, Kind, ParameterParser, ParameterSink};
 use crate::mime::utils::{decode_token_header_value, index_of, is_token, is_valid_boundary};
 use crate::mime::wire_sink::{MimeWireSink, NoWire};
@@ -797,6 +799,14 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
                     let boundary = boundary.to_string();
                     if self.boundary_set {
                         self.boundaries.pop();
+                    }
+                    if let Some(max) = self.limits.max_multipart_depth {
+                        if self.boundaries.len() >= max {
+                            return Err(ParseError::with_locator(
+                                format_multipart_too_deep(max),
+                                &*self.locator,
+                            ));
+                        }
                     }
                     self.boundaries.push(boundary);
                     self.boundary_set = true;

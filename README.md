@@ -163,6 +163,8 @@ The ring belongs to the caller and the parser never grows it. A header line is u
 
 The limits are one struct, `ParserLimits`, whose fields are `None` for no limit; set them with `with_limits`, `limits_mut` or `set_limits`.
 
+`ParserLimits::max_multipart_depth` (default 32) bounds how many multipart entities may be open at once. RFC 2046 sets no limit and real mail rarely goes past six levels, but without a bound a message of nested `multipart/*` parts makes the parser, and any handler that keeps per-entity state, grow with the input. A `multipart` entity that would be the 33rd open at once makes `receive` return an error naming the limit. Only multipart nesting is counted: the parser does not descend into `message/rfc822`, so an embedded message is body content and its own nesting is not counted.
+
 `MimeHandler::set_locator` hands the handler an `Rc<dyn Locator>` that stays live: keep it and read the offset, line and column from inside any later callback. A parser and its handler are used from one thread, so none of this is `Send` or `Sync`.
 
 ## Package layout
