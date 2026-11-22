@@ -126,7 +126,7 @@ The elements are cut out of the raw bytes by their quotes, comments and angle br
 
 `obsolete_structure` is reported once for a header, before the first event it affects. If an element cannot be read, `malformed_header(name, reason)` is delivered and the rest of the header, from that element on, follows as unstructured text; it ends any group and the header, so no `end_` event follows. What was read before the bad element has already been delivered, so a handler can rebuild the value: its own rendering of what it was given, plus the text.
 
-`AddressListCollector` and `MessageIdListCollector` rebuild the lists as `Vec<Address>` and `Vec<ContentId>` for a handler that wants them. `Content-Transfer-Encoding`, `Content-ID` and `MIME-Version` are held (they are short) and report the same way: an invalid value is a `malformed_header` and its text, not silence.
+`AddressListCollector` and `MessageIdListCollector` rebuild the lists as `Vec<Address>` and `Vec<ContentId>` for a handler that wants them. `Content-Transfer-Encoding`, `Content-ID` and `MIME-Version` are held (they are short) and arrive as plain values: `content_transfer_encoding(&str)`, `content_id(local_part, domain)` and `mime_version(major, minor)`. They report the same way: an invalid value is a `malformed_header` and its text, not silence.
 
 ### Content-Type and Content-Disposition
 

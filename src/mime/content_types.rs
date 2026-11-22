@@ -241,6 +241,18 @@ impl MimeVersion {
     pub const VERSION_1_0: Self = Self::Version1_0;
     pub const V1_0: Self = Self::Version1_0;
 
+    pub fn major(self) -> u32 {
+        match self {
+            Self::Version1_0 => 1,
+        }
+    }
+
+    pub fn minor(self) -> u32 {
+        match self {
+            Self::Version1_0 => 0,
+        }
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
         if value.trim() == "1.0" {
             Some(Self::Version1_0)

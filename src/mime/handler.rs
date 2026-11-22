@@ -1,7 +1,6 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::mime::content_types::{ContentId, MimeVersion};
 use crate::mime::error::ParseResult;
 use crate::mime::limits::ParserLimits;
 
@@ -223,11 +222,13 @@ pub trait MimeHandler {
         Ok(())
     }
 
-    fn content_id(&mut self, _content_id: &ContentId) -> ParseResult<()> {
+    /// A `Content-ID`: the local part and domain of its one `<local@domain>`.
+    fn content_id(&mut self, _local_part: &str, _domain: &str) -> ParseResult<()> {
         Ok(())
     }
 
-    fn mime_version(&mut self, _version: MimeVersion) -> ParseResult<()> {
+    /// A `MIME-Version` (RFC 2045 section 4): `1.0` arrives as `(1, 0)`.
+    fn mime_version(&mut self, _major: u32, _minor: u32) -> ParseResult<()> {
         Ok(())
     }
 
@@ -302,11 +303,11 @@ macro_rules! forward_handler {
             fn content_transfer_encoding(&mut self, encoding: &str) -> ParseResult<()> {
                 (**self).content_transfer_encoding(encoding)
             }
-            fn content_id(&mut self, content_id: &ContentId) -> ParseResult<()> {
-                (**self).content_id(content_id)
+            fn content_id(&mut self, local_part: &str, domain: &str) -> ParseResult<()> {
+                (**self).content_id(local_part, domain)
             }
-            fn mime_version(&mut self, version: MimeVersion) -> ParseResult<()> {
-                (**self).mime_version(version)
+            fn mime_version(&mut self, major: u32, minor: u32) -> ParseResult<()> {
+                (**self).mime_version(major, minor)
             }
             fn end_headers(&mut self) -> ParseResult<()> {
                 (**self).end_headers()

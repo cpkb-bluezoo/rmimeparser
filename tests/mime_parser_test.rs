@@ -3,8 +3,7 @@ use std::rc::Rc;
 use loopbuf::LoopBuf;
 use rmimeparser::{
     decode_slice, index_of, ContentDisposition, ContentDispositionCollector, ContentType,
-    ContentTypeCollector, HeaderDelivery, Locator, MimeHandler, MimeParser, MimeVersion,
-    ParseResult,
+    ContentTypeCollector, HeaderDelivery, Locator, MimeHandler, MimeParser, ParseResult,
 };
 
 struct TestHandler {
@@ -12,7 +11,7 @@ struct TestHandler {
     content_type: Option<ContentType>,
     content_disposition: Option<ContentDisposition>,
     content_transfer_encoding: Option<String>,
-    mime_version: Option<MimeVersion>,
+    mime_version: Option<(u32, u32)>,
     body: Vec<u8>,
     entity_count: usize,
     /// Unstructured headers, as (name, value).
@@ -113,9 +112,10 @@ impl MimeHandler for TestHandler {
         Ok(())
     }
 
-    fn mime_version(&mut self, version: MimeVersion) -> ParseResult<()> {
+    fn mime_version(&mut self, major: u32, minor: u32) -> ParseResult<()> {
+        let version = format!("{major}.{minor}");
         self.events.push(format!("mimeVersion:{version}"));
-        self.mime_version = Some(version);
+        self.mime_version = Some((major, minor));
         Ok(())
     }
 
@@ -294,7 +294,7 @@ fn test_mime_version() {
     let mut parser = MimeParser::new(&mut handler);
     parse(&mut parser, content).unwrap();
 
-    assert_eq!(handler.mime_version, Some(MimeVersion::V1_0));
+    assert_eq!(handler.mime_version, Some((1, 0)));
 }
 
 #[test]

@@ -4,8 +4,8 @@ use std::rc::Rc;
 use loopbuf::LoopBuf;
 use rmimeparser::{
     Address, AddressListCollector, ContentId, ContentType, ContentTypeCollector, EmailAddress,
-    Locator, MessageHandler, MessageIdListCollector, MessageParser, MimeHandler, MimeVersion,
-    OffsetDateTime, ParseResult,
+    Locator, MessageHandler, MessageIdListCollector, MessageParser, MimeHandler, OffsetDateTime,
+    ParseResult,
 };
 
 /// Records parser events for verification (gumdrop `MessageParserTest.TestMessageHandler`).
@@ -22,7 +22,7 @@ struct TestMessageHandler {
     ids: MessageIdListCollector,
     content_type_collector: ContentTypeCollector,
     content_type: Option<ContentType>,
-    mime_version: Option<MimeVersion>,
+    mime_version: Option<(u32, u32)>,
     body: Vec<u8>,
     entity_count: usize,
 }
@@ -120,8 +120,8 @@ impl MimeHandler for TestMessageHandler {
         Ok(())
     }
 
-    fn mime_version(&mut self, version: MimeVersion) -> ParseResult<()> {
-        self.mime_version = Some(version);
+    fn mime_version(&mut self, major: u32, minor: u32) -> ParseResult<()> {
+        self.mime_version = Some((major, minor));
         Ok(())
     }
 
@@ -429,7 +429,7 @@ fn test_mime_version_header() {
     let mut handler = TestMessageHandler::new();
     parse(content, &mut handler);
 
-    assert_eq!(handler.mime_version, Some(MimeVersion::V1_0));
+    assert_eq!(handler.mime_version, Some((1, 0)));
 }
 
 // --- Complete message tests ---

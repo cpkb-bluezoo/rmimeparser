@@ -5,7 +5,6 @@ use std::rc::Rc;
 
 use loopbuf::LoopBuf;
 
-use crate::mime::content_types::{ContentId, MimeVersion};
 use crate::mime::error::ParseResult;
 use crate::mime::handler::{HeaderDelivery, Locator, MimeHandler};
 use crate::mime::limits::ParserLimits;
@@ -142,12 +141,12 @@ impl<H: MessageHandler> MimeHandler for MessageBridge<H> {
         self.inner.content_transfer_encoding(encoding)
     }
 
-    fn content_id(&mut self, content_id: &ContentId) -> ParseResult<()> {
-        self.inner.content_id(content_id)
+    fn content_id(&mut self, local_part: &str, domain: &str) -> ParseResult<()> {
+        self.inner.content_id(local_part, domain)
     }
 
-    fn mime_version(&mut self, version: MimeVersion) -> ParseResult<()> {
-        self.inner.mime_version(version)
+    fn mime_version(&mut self, major: u32, minor: u32) -> ParseResult<()> {
+        self.inner.mime_version(major, minor)
     }
 
     fn end_headers(&mut self) -> ParseResult<()> {

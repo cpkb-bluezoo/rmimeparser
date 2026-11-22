@@ -4,8 +4,8 @@
 
 use loopbuf::LoopBuf;
 use rmimeparser::{
-    Address, AddressListCollector, ContentId, EmailAddress, MessageHandler, MessageIdListCollector,
-    MessageParser, MimeHandler, MimeVersion, ObsoleteStructureType, OffsetDateTime, ParseResult,
+    Address, AddressListCollector, EmailAddress, MessageHandler, MessageIdListCollector,
+    MessageParser, MimeHandler, ObsoleteStructureType, OffsetDateTime, ParseResult,
 };
 
 /// `(header name, value bytes, expected events)`
@@ -367,12 +367,12 @@ impl MimeHandler for Render {
         self.out.push(format!("cte {e:?}"));
         Ok(())
     }
-    fn content_id(&mut self, id: &ContentId) -> ParseResult<()> {
-        self.out.push(format!("cid {}", id));
+    fn content_id(&mut self, local_part: &str, domain: &str) -> ParseResult<()> {
+        self.out.push(format!("cid <{local_part}@{domain}>"));
         Ok(())
     }
-    fn mime_version(&mut self, v: MimeVersion) -> ParseResult<()> {
-        self.out.push(format!("mv {v}"));
+    fn mime_version(&mut self, major: u32, minor: u32) -> ParseResult<()> {
+        self.out.push(format!("mv {major}.{minor}"));
         Ok(())
     }
     fn malformed_header(&mut self, _: &str, reason: &str) -> ParseResult<()> {

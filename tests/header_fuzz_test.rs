@@ -119,12 +119,12 @@ impl MimeHandler for Events {
         self.push(format!("cte {e}"));
         Ok(())
     }
-    fn content_id(&mut self, id: &rmimeparser::ContentId) -> ParseResult<()> {
-        self.push(format!("cid {id}"));
+    fn content_id(&mut self, local_part: &str, domain: &str) -> ParseResult<()> {
+        self.push(format!("cid <{local_part}@{domain}>"));
         Ok(())
     }
-    fn mime_version(&mut self, v: rmimeparser::MimeVersion) -> ParseResult<()> {
-        self.push(format!("mv {v}"));
+    fn mime_version(&mut self, major: u32, minor: u32) -> ParseResult<()> {
+        self.push(format!("mv {major}.{minor}"));
         Ok(())
     }
 }

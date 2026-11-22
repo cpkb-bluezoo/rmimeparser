@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** `MimeHandler::content_id` now takes the local part and domain
+  (`content_id(&str, &str)`) and `MimeHandler::mime_version` the numbers
+  (`mime_version(u32, u32)`, so `1.0` is `(1, 0)`), instead of a `ContentId`
+  and a `MimeVersion`. The handler no longer receives a value object for any
+  header. `ContentId` and `MimeVersion` remain for `MimeWriter`.
+
 ### Added
 
 - `UuScanner`, with `UuHandler` and `UuScannerLimits`: a push scanner that

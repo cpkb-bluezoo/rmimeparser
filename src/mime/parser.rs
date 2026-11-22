@@ -924,7 +924,7 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         let mut cursor = ByteCursor::new(value);
         match ContentIdParser::parse(&mut cursor, HeaderCharset::Iso88591) {
             Some(id) => {
-                self.handler.content_id(&id)?;
+                self.handler.content_id(id.local_part(), id.domain())?;
                 Ok(None)
             }
             None => Ok(Some("a Content-ID is one <local@domain> message-id")),
@@ -939,7 +939,8 @@ impl<H: MimeHandler, W: MimeWireSink> MimeParser<H, W> {
         let parsed = uncommented.ok().and_then(|v| MimeVersion::parse(v.trim()));
         match parsed {
             Some(version) => {
-                self.handler.mime_version(version)?;
+                self.handler
+                    .mime_version(version.major(), version.minor())?;
                 Ok(None)
             }
             None => Ok(Some("not a MIME version")),
