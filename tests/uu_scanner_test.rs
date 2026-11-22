@@ -1,38 +1,61 @@
 //! `UuScanner`: inline uuencoded blocks in a text body.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::cell::Cell;
 
 use rmimeparser::{encode_uuencode, ParseResult, UuHandler, UuScanner, UuScannerLimits};
 
-struct Counting;
+// Allocations are counted per thread: the test harness allocates on its own
+// threads while a test runs, and a process-wide count would take that in.
+thread_local! {
+    static CURRENT: Cell<isize> = const { Cell::new(0) };
+    static PEAK: Cell<isize> = const { Cell::new(0) };
+}
 
-static CURRENT: AtomicUsize = AtomicUsize::new(0);
-static PEAK: AtomicUsize = AtomicUsize::new(0);
+fn grow(by: usize) {
+    CURRENT.with(|c| {
+        let now = c.get() + by as isize;
+        c.set(now);
+        PEAK.with(|p| p.set(p.get().max(now)));
+    });
+}
+
+fn shrink(by: usize) {
+    CURRENT.with(|c| c.set(c.get() - by as isize));
+}
+
+/// Starts a measurement, returning the baseline to subtract from [`peak`].
+fn start_measuring() -> isize {
+    let base = CURRENT.with(|c| c.get());
+    PEAK.with(|p| p.set(base));
+    base
+}
+
+fn peak(base: isize) -> usize {
+    (PEAK.with(|p| p.get()) - base) as usize
+}
+
+struct Counting;
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let p = System.alloc(layout);
         if !p.is_null() {
-            let now = CURRENT.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
-            PEAK.fetch_max(now, Ordering::Relaxed);
+            grow(layout.size());
         }
         p
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         System.dealloc(ptr, layout);
-        CURRENT.fetch_sub(layout.size(), Ordering::Relaxed);
+        shrink(layout.size());
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let p = System.realloc(ptr, layout, new_size);
         if !p.is_null() {
             if new_size >= layout.size() {
-                let grow = new_size - layout.size();
-                let now = CURRENT.fetch_add(grow, Ordering::Relaxed) + grow;
-                PEAK.fetch_max(now, Ordering::Relaxed);
+                grow(new_size - layout.size());
             } else {
-                CURRENT.fetch_sub(layout.size() - new_size, Ordering::Relaxed);
+                shrink(layout.size() - new_size);
             }
         }
         p
@@ -41,9 +64,6 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static ALLOC: Counting = Counting;
-
-/// The memory test measures a process-wide counter, so tests run one at a time.
-static SERIAL: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Ev {
@@ -365,7 +385,9 @@ fn the_name_is_bounded() {
             ..Default::default()
         },
     );
-    scanner.feed(b"begin 644 abcd\nend\nbegin 644 abcde\nend\n").unwrap();
+    scanner
+        .feed(b"begin 644 abcd\nend\nbegin 644 abcde\nend\n")
+        .unwrap();
     scanner.finish().unwrap();
     assert_eq!(
         scanner.into_handler().events,
@@ -426,8 +448,6 @@ fn a_scanner_can_be_reused_after_finish() {
 
 #[test]
 fn a_multi_megabyte_block_decodes_in_constant_memory() {
-    let _g = SERIAL.lock().unwrap();
-
     struct Count {
         bytes: usize,
         sum: u64,
@@ -447,8 +467,7 @@ fn a_multi_megabyte_block_decodes_in_constant_memory() {
         let mut out = Vec::new();
         let mut expected_sum = 0u64;
 
-        let base = CURRENT.load(Ordering::Relaxed);
-        PEAK.store(base, Ordering::Relaxed);
+        let base = start_measuring();
         let mut fed = 0;
         while fed < size {
             out.clear();
@@ -464,7 +483,7 @@ fn a_multi_megabyte_block_decodes_in_constant_memory() {
         let count = scanner.into_handler();
         assert_eq!(count.bytes, fed);
         assert_eq!(count.sum, expected_sum);
-        PEAK.load(Ordering::Relaxed) - base
+        peak(base)
     };
 
     let small = peak_for(45 * 1000);

@@ -2,40 +2,63 @@
 //! bounded, and the bound holds memory down whatever the input does.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::io::Read;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 use loopbuf::LoopBuf;
 use rmimeparser::{MimeHandler, MimeParser, ParseResult, ParserLimits};
 
-struct Counting;
+// Allocations are counted per thread: the test harness allocates on its own
+// threads while a test runs, and a process-wide count would take that in.
+thread_local! {
+    static CURRENT: Cell<isize> = const { Cell::new(0) };
+    static PEAK: Cell<isize> = const { Cell::new(0) };
+}
 
-static CURRENT: AtomicUsize = AtomicUsize::new(0);
-static PEAK: AtomicUsize = AtomicUsize::new(0);
+fn grow(by: usize) {
+    CURRENT.with(|c| {
+        let now = c.get() + by as isize;
+        c.set(now);
+        PEAK.with(|p| p.set(p.get().max(now)));
+    });
+}
+
+fn shrink(by: usize) {
+    CURRENT.with(|c| c.set(c.get() - by as isize));
+}
+
+/// Starts a measurement, returning the baseline to subtract from [`peak`].
+fn start_measuring() -> isize {
+    let base = CURRENT.with(|c| c.get());
+    PEAK.with(|p| p.set(base));
+    base
+}
+
+fn peak(base: isize) -> usize {
+    (PEAK.with(|p| p.get()) - base) as usize
+}
+
+struct Counting;
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let p = System.alloc(layout);
         if !p.is_null() {
-            let now = CURRENT.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
-            PEAK.fetch_max(now, Ordering::Relaxed);
+            grow(layout.size());
         }
         p
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         System.dealloc(ptr, layout);
-        CURRENT.fetch_sub(layout.size(), Ordering::Relaxed);
+        shrink(layout.size());
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let p = System.realloc(ptr, layout, new_size);
         if !p.is_null() {
             if new_size >= layout.size() {
-                let now = CURRENT.fetch_add(new_size - layout.size(), Ordering::Relaxed)
-                    + (new_size - layout.size());
-                PEAK.fetch_max(now, Ordering::Relaxed);
+                grow(new_size - layout.size());
             } else {
-                CURRENT.fetch_sub(layout.size() - new_size, Ordering::Relaxed);
+                shrink(layout.size() - new_size);
             }
         }
         p
@@ -44,9 +67,6 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static ALLOC: Counting = Counting;
-
-/// The tests measure a process-wide counter, so they run one at a time.
-static SERIAL: Mutex<()> = Mutex::new(());
 
 #[derive(Default)]
 struct Sink {
@@ -154,7 +174,6 @@ fn the_default_limit_is_32_and_unlimited_has_none() {
 
 #[test]
 fn a_message_32_deep_parses_and_33_deep_fails_naming_the_limit() {
-    let _g = SERIAL.lock().unwrap();
     let (ok, sink) = parse_nest(ParserLimits::default(), 32, 1);
     ok.unwrap();
     assert!(sink.entities >= 32);
@@ -167,7 +186,6 @@ fn a_message_32_deep_parses_and_33_deep_fails_naming_the_limit() {
 
 #[test]
 fn unlimited_parses_both() {
-    let _g = SERIAL.lock().unwrap();
     parse_nest(ParserLimits::unlimited(), 32, 1).0.unwrap();
     parse_nest(ParserLimits::unlimited(), 33, 1).0.unwrap();
     parse_nest(ParserLimits::unlimited(), 500, 1).0.unwrap();
@@ -175,7 +193,6 @@ fn unlimited_parses_both() {
 
 #[test]
 fn the_outcome_is_the_same_for_every_chunk_size() {
-    let _g = SERIAL.lock().unwrap();
     for depth in [32usize, 33] {
         let data = nested(depth);
         let mut expected: Option<bool> = None;
@@ -206,14 +223,12 @@ fn the_outcome_is_the_same_for_every_chunk_size() {
 
 #[test]
 fn memory_at_the_limit_does_not_grow_with_the_body() {
-    let _g = SERIAL.lock().unwrap();
     let peak_for = |lines: usize| {
-        let base = CURRENT.load(Ordering::Relaxed);
-        PEAK.store(base, Ordering::Relaxed);
+        let base = start_measuring();
         let (r, sink) = parse_nest(ParserLimits::default(), 32, lines);
         r.unwrap();
         assert!(sink.body_bytes >= lines * 20);
-        PEAK.load(Ordering::Relaxed) - base
+        peak(base)
     };
     let small = peak_for(1_000);
     // About 25 MiB of body text
@@ -227,9 +242,7 @@ fn memory_at_the_limit_does_not_grow_with_the_body() {
 
 #[test]
 fn a_pathological_nest_fails_fast_with_memory_bounded_by_the_limit() {
-    let _g = SERIAL.lock().unwrap();
-    let base = CURRENT.load(Ordering::Relaxed);
-    PEAK.store(base, Ordering::Relaxed);
+    let base = start_measuring();
     let mut sink = Sink::default();
     let err = {
         let mut parser = MimeParser::new(&mut sink);
@@ -237,6 +250,6 @@ fn a_pathological_nest_fails_fast_with_memory_bounded_by_the_limit() {
     };
     assert!(err.message().contains("depth"), "{err}");
     assert!(sink.entities <= 33, "went on to {} entities", sink.entities);
-    let peak = PEAK.load(Ordering::Relaxed) - base;
+    let peak = peak(base);
     assert!(peak < 2 * 1024 * 1024, "peak {peak}");
 }
