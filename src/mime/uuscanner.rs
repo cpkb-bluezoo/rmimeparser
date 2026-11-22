@@ -435,7 +435,7 @@ fn classify(line: &[u8], limits: &UuScannerLimits) -> Line {
             Line::Invalid
         };
     }
-    let expected = n.div_ceil(3) * 4;
+    let expected = (n + 2) / 3 * 4;
     if body.len() > expected || !body.iter().all(|b| (0x20..=0x60).contains(b)) {
         return Line::Invalid;
     }
