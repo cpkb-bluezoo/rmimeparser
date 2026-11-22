@@ -387,7 +387,7 @@ fn uu_char(c: Option<&u8>) -> u32 {
 }
 
 /// Decode `n` bytes from the groups of four characters after the length.
-fn decode_uu_line(line: &[u8], n: usize, dst: &mut Vec<u8>) {
+pub(crate) fn decode_uu_line(line: &[u8], n: usize, dst: &mut Vec<u8>) {
     let mut produced = 0usize;
     let mut i = 1usize;
     while produced < n {

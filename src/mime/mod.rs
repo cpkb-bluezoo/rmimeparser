@@ -14,6 +14,7 @@ pub mod parameter;
 pub(crate) mod parameters;
 pub mod parser;
 pub mod utils;
+pub mod uuscanner;
 pub mod wire_sink;
 pub mod write_error;
 pub mod writer;
@@ -43,6 +44,7 @@ pub use utils::{
     decode_header_bytes, decode_slice, decode_token_header_value, index_of, is_special, is_token,
     is_valid_boundary, MIMEUtils,
 };
+pub use uuscanner::{UuHandler, UuScanner, UuScannerLimits};
 pub use write_error::{WriteError, WriteResult};
 pub use writer::MimeWriter;
 

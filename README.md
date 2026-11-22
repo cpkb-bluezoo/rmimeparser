@@ -8,7 +8,7 @@ Push-based MIME and RFC 5322 message parser and writer for Rust.
 - Handler callbacks instead of materialised message domain objects
 - Push `MimeWriter` / `MessageWriter` writing into a caller-owned ring, each call atomic — chunked `body_content`, no builder/DOM
 - MIME core with RFC 5322 as an extension (`MessageParser` / `MessageWriter` compose MIME)
-- Content-Transfer-Encoding codecs for base64, quoted-printable and uuencode (`x-uuencode`): the parser decodes bodies as they stream, and each codec is available on its own as a push decoder and a streaming encoder
+- Content-Transfer-Encoding codecs for base64, quoted-printable and uuencode (`x-uuencode`): the parser decodes bodies as they stream, and each codec is available on its own as a push decoder and a streaming encoder, and `UuScanner` finds uuencoded blocks inline in a text body
 - One dependency, [loopbuf](https://github.com/cpkb-bluezoo/loopbuf), the fixed-capacity ring shared by the other parsers
 
 Header encoding helpers (`RFC2047Encoder`, `MessageDateTimeFormatter`, `to_header_value()` on value types) are shared by the writers.
@@ -160,6 +160,12 @@ parser.close(&mut ring)?;
 The ring belongs to the caller and the parser never grows it. A header line is used whole, so a partial one stays in the ring, to be completed by the next read; the ring therefore has to hold the longest header line (RFC 5322 limits it to 998 bytes), and a ring full of one unfinished line makes `receive` return an error rather than wait for data that cannot fit. A header line longer than `ParserLimits::max_header_line_length` (default 998) is rejected without waiting for its terminator. Body bytes are consumed as they arrive and handed to the handler as zero-copy runs (at most `set_chunk_size` bytes each, default 4096; a run that crosses the ring's wrap arrives as two), so a body never needs to be buffered or re-presented, whatever its line lengths. The parser keeps only what it cannot yet decide: a line that might be a multipart boundary (at most about 76 bytes), the line ending before it, and the partial unit of a transfer-encoding decoder. `parser.is_underflow()` is true while an incomplete line is left in the ring.
 
 `close(&mut ring)` parses what the ring still holds first, so a final line without its terminator is delivered as a header, as body content or as the closing boundary, which files and IMAP literals often need. It fails if a multipart body is left unclosed. After closing, `receive` returns an error until `reset()`.
+
+### Inline uuencoded blocks
+
+`UuencodeDecoder` decodes a body sent as `Content-Transfer-Encoding: x-uuencode`. Plain-text mail and Usenet articles more often carry uuencoded files *inline*: prose, a `begin <mode> <name>` line, encoded lines, `end`, then more prose, all under `7bit`. `UuScanner` finds those blocks in a body pushed in chunks of any size and tells a `UuHandler` what it sees: `text` (everything outside a block, as it arrived), `begin(mode, name)`, `data` (the decoded file, as each line completes) and `end(complete)`. `complete` is false when the block was cut off, either by the end of the input or by a line that is not uuencode, which is then delivered as text (and may itself begin the next block). Call `finish()` at the end of the input.
+
+A `begin` line is recognised only at the start of a line, with a three or four digit octal mode and a name of at most `UuScannerLimits::max_name_length` (255) bytes without control characters. It is not announced until the line after it is uuencode, `end` or the terminating line, so a line of prose that starts with `begin ` is always returned as text. Lines may end in `\r\n` or `\n`, a space or a backtick stands for zero, and trailing whitespace is ignored, so characters trimmed from the end of a line count as zero. The scanner holds one line (at most `UuScannerLimits::max_line_length`, default 128, or the longest `begin` line), so its memory does not depend on the size of the body or of a block. `UuencodeEncoder` writes the same framing.
 
 The limits are one struct, `ParserLimits`, whose fields are `None` for no limit; set them with `with_limits`, `limits_mut` or `set_limits`.
 

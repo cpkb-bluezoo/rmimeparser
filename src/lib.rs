@@ -23,8 +23,9 @@ pub use mime::{
     ContentTypeCollector, ContentTypeParser, DefaultHandler, Handler, HeaderDelivery, Locator,
     MIMEMessages, MIMEUtils, MimeHandler, MimeParser, MimeVersion, MimeWriter, Parameter,
     ParameterCollector, ParseError, ParseResult, ParserLimits, QuotedPrintableDecoder,
-    QuotedPrintableEncoder, UuencodeDecoder, UuencodeEncoder, WriteError, WriteResult,
-    BASE64_MAX_LINE_LENGTH, HARD_LINE_LIMIT, SOFT_LINE_LIMIT, UUENCODE_LINE_BYTES,
+    QuotedPrintableEncoder, UuHandler, UuScanner, UuScannerLimits, UuencodeDecoder,
+    UuencodeEncoder, WriteError, WriteResult, BASE64_MAX_LINE_LENGTH, HARD_LINE_LIMIT,
+    SOFT_LINE_LIMIT, UUENCODE_LINE_BYTES,
 };
 pub use rfc2047::{Decoder as Rfc2047Decoder, Encoder as Rfc2047Encoder, HeaderTextDecoder};
 pub use rfc2231::Decoder as Rfc2231Decoder;
